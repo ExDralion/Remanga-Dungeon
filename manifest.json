@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "SailorM Dungeon Hunters",
+  "description": "Автоматизация события Охотники подземелий на ReManga.",
+  "version": "0.1.0",
+  "permissions": [
+    "alarms",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://remanga.org/*",
+    "*://*.remanga.org/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://remanga.org/dungeon-hunters*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

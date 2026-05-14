@@ -1,0 +1,14 @@
+node_modules/
+*.log
+*.zip
+*.crx
+*.pem
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.edge-*/
+.chrome-*/
+artifacts/
+tmp/
+temp/
