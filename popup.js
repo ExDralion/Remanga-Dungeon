@@ -11,6 +11,16 @@ const nodes = {
   successRuns: $('#successRuns'),
   failedRuns: $('#failedRuns'),
   coins: $('#coins'),
+  coinFarmRank: $('#coinFarmRank'),
+  coinFarmFormula: $('#coinFarmFormula'),
+  coinFarmRate: $('#coinFarmRate'),
+  coinFarmExpected: $('#coinFarmExpected'),
+  coinFarmMp: $('#coinFarmMp'),
+  coinFarmByMp: $('#coinFarmByMp'),
+  coinForecast24: $('#coinForecast24'),
+  coinForecastEvent: $('#coinForecastEvent'),
+  runWinrate: $('#runWinrate'),
+  runAvgCoins: $('#runAvgCoins'),
   eventLeft: $('#eventLeft'),
   rankProgress: $('#rankProgress'),
   rankNext: $('#rankNext'),
@@ -22,6 +32,7 @@ const nodes = {
   pageSubtitle: $('#pageSubtitle'),
   active: $('#active'),
   dungeons: $('#dungeons'),
+  selectedDungeon: $('#selectedDungeon'),
   mode: $('#mode'),
   auto: $('#auto'),
   usePotions: $('#usePotions'),
@@ -40,6 +51,10 @@ document.querySelectorAll('[data-tab]').forEach(button => {
 });
 $('#refresh').addEventListener('click', refresh);
 $('#open').addEventListener('click', () => send({ type: 'smdh_open_page' }));
+$('#runSelected').addEventListener('click', async () => {
+  await busy(() => send({ type: 'smdh_run_selected', dungeonId: nodes.selectedDungeon.value }));
+  await refresh();
+});
 $('#run').addEventListener('click', async () => {
   await busy(() => send({ type: 'smdh_run_once', mode: nodes.mode.value }));
   await refresh();
@@ -76,7 +91,7 @@ nodes.mode.addEventListener('change', async () => {
   await send({ type: 'smdh_set_mode', mode: nodes.mode.value });
   await refresh();
 });
-[nodes.usePotions, nodes.autoClaim, nodes.autoMini, nodes.autoAdvent, nodes.potionMinRank, ...nodes.potionModes].forEach(input => {
+[nodes.usePotions, nodes.autoClaim, nodes.autoMini, nodes.autoAdvent, nodes.selectedDungeon, nodes.potionMinRank, ...nodes.potionModes].forEach(input => {
   input.addEventListener('change', saveSettings);
 });
 
@@ -123,6 +138,7 @@ async function saveSettings() {
       autoClaim: nodes.autoClaim.checked,
       autoMini: nodes.autoMini.checked,
       autoAdvent: nodes.autoAdvent.checked,
+      selectedDungeonId: nodes.selectedDungeon.value,
       potionMinRank: nodes.potionMinRank.value,
       potionModes
     }
@@ -144,9 +160,11 @@ function render(state) {
   nodes.successRuns.textContent = num(profile.success_runs);
   nodes.failedRuns.textContent = num(profile.failed_runs);
   nodes.coins.textContent = num(profile.coins);
+  renderCoinFarmPlan(state.farmPlan, state.forecast, state.efficiency);
   nodes.eventLeft.textContent = state.event?.date_end ? formatDuration(Date.parse(state.event.date_end) - Date.now()) : '-';
   nodes.auto.checked = Boolean(stored.auto);
   nodes.mode.value = stored.mode || 'safe';
+  renderDungeonSelect(state.dungeons || [], stored.selectedDungeonId);
   nodes.usePotions.checked = stored.usePotions !== false;
   nodes.autoClaim.checked = stored.autoClaim !== false;
   nodes.autoMini.checked = stored.autoMini !== false;
@@ -160,7 +178,7 @@ function render(state) {
   if (nodes.topStatus) nodes.topStatus.textContent = `${profile.rank || '?'} · ${num(profile.current_mp)}/${num(profile.max_mp)} MP`;
 
   renderRankProgress(profile, state.event?.meta?.ranks || {});
-  renderActiveRun(state.activeRun, state.nextAction);
+  renderActiveRun(state.activeRun, state.nextAction, state.activeRunDetails);
   renderDungeons(state.dungeons || [], profile);
   renderLog(stored.logs || []);
 }
@@ -181,16 +199,34 @@ function renderRankProgress(profile, thresholds) {
   nodes.rankBar.style.width = `${percent}%`;
 }
 
-function renderActiveRun(run, nextAction = null) {
+function renderActiveRun(run, nextAction = null, details = null) {
   if (!run) {
     nodes.active.innerHTML = `<strong>Активного данжа нет</strong><small>${escapeHtml(nextAction?.text || 'Можно запускать следующий цикл.')}</small>`;
     return;
   }
   const isMini = run.game_type === 2;
+  const rewardText = details
+    ? `Награда: +${num(details.xp_reward)} XP · ~${num(Math.round(details.expected_coins))} монет (${Math.round(Number(details.chance || 0))}%)`
+    : '';
+  const actionText = details?.next_action || '';
   nodes.active.innerHTML = `
     <strong>${escapeHtml(run.dungeon.rank)}-данж ${isMini ? 'с мини-игрой' : 'в процессе'}</strong>
     <small>${isMini ? 'Мини-игру можно закрыть кнопкой "Завершить мини-игру".' : `Готовность: ${escapeHtml(formatDate(run.ends_at))} (${escapeHtml(formatDuration(Date.parse(run.ends_at) - Date.now()))})`}</small>
+    ${rewardText ? `<small>${escapeHtml(rewardText)}</small>` : ''}
+    ${actionText ? `<small>${escapeHtml(actionText)}</small>` : ''}
   `;
+}
+
+function renderDungeonSelect(items, selectedId) {
+  if (!nodes.selectedDungeon) return;
+  const currentValue = String(selectedId || nodes.selectedDungeon.value || '');
+  const options = ['<option value="">Auto dungeon</option>'];
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item?.id || !item?.rank) continue;
+    options.push(`<option value="${escapeHtml(item.id)}">${escapeHtml(item.rank)} · ${num(item.mp_cost)} MP · ${formatDuration(Number(item.duration_seconds || 0) * 1000)}</option>`);
+  }
+  nodes.selectedDungeon.innerHTML = options.join('');
+  nodes.selectedDungeon.value = [...nodes.selectedDungeon.options].some(option => option.value === currentValue) ? currentValue : '';
 }
 
 function renderDungeons(dungeons, profile) {
@@ -206,7 +242,7 @@ function renderDungeons(dungeons, profile) {
           <strong>${escapeHtml(dungeon.rank)}-ранг</strong>
           <em>${num(dungeon.mp_cost)} MP · ${formatDuration(Number(dungeon.duration_seconds || 0) * 1000)} · ${chance || '-'}% шанс</em>
         </div>
-        <small>+${num(dungeon.xp_reward)} XP</small>
+        <small>+${num(dungeon.xp_reward)} XP · +${num(dungeon.coin_reward)} монет</small>
       </div>
     `;
   }).join('') || '<p>Данжи не загружены.</p>';
@@ -214,6 +250,50 @@ function renderDungeons(dungeons, profile) {
 
 function renderLog(logs) {
   nodes.log.innerHTML = logs.slice(0, 20).map(item => `<div>${escapeHtml(item.message)}</div>`).join('') || '<p>Лог пуст.</p>';
+}
+
+function renderCoinFarmPlan(plan, forecast = null, efficiency = null) {
+  const best = plan?.best;
+  if (!best) {
+    if (nodes.coinFarmRank) nodes.coinFarmRank.textContent = '-';
+    if (nodes.coinFarmFormula) nodes.coinFarmFormula.textContent = 'Нет доступных данжей для расчета.';
+    if (nodes.coinFarmRate) nodes.coinFarmRate.textContent = '-';
+    if (nodes.coinFarmExpected) nodes.coinFarmExpected.textContent = '-';
+    if (nodes.coinFarmMp) nodes.coinFarmMp.textContent = '-';
+    if (nodes.coinFarmByMp) nodes.coinFarmByMp.textContent = '-';
+    if (nodes.coinForecast24) nodes.coinForecast24.textContent = '-';
+    if (nodes.coinForecastEvent) nodes.coinForecastEvent.textContent = '-';
+    if (nodes.runWinrate) nodes.runWinrate.textContent = '-';
+    if (nodes.runAvgCoins) nodes.runAvgCoins.textContent = '-';
+    return;
+  }
+
+  const duration = formatDuration(Number(best.duration_seconds || 0) * 1000);
+  if (nodes.coinFarmRank) nodes.coinFarmRank.textContent = `${best.rank}-данж`;
+  if (nodes.coinFarmFormula) {
+    nodes.coinFarmFormula.textContent = `${num(best.mp_cost)} MP · ${duration} · ${Math.round(Number(best.chance || 0))}% шанс · guild +${num(best.guild_bonus)}%${best.potion_text ? ` · ${best.potion_text}` : ''}`;
+  }
+  if (nodes.coinFarmRate) nodes.coinFarmRate.textContent = formatDecimal(best.coins_per_minute);
+  if (nodes.coinFarmExpected) nodes.coinFarmExpected.textContent = num(Math.round(Number(best.expected_coins || 0)));
+  if (nodes.coinFarmMp) nodes.coinFarmMp.textContent = formatDecimal(best.coins_per_mp);
+  if (nodes.coinFarmByMp) {
+    const byMp = plan?.bestByMp;
+    nodes.coinFarmByMp.textContent = byMp ? `${byMp.rank} · ${formatDecimal(byMp.coins_per_mp)}` : '-';
+  }
+  if (nodes.coinForecast24) {
+    const next24 = forecast?.next24h;
+    nodes.coinForecast24.textContent = next24 ? `${num(Math.round(next24.coins))} / ${num(next24.runs)} run` : '-';
+  }
+  if (nodes.coinForecastEvent) {
+    const eventLeft = forecast?.eventLeft;
+    nodes.coinForecastEvent.textContent = eventLeft ? `${num(Math.round(eventLeft.coins))} / ${num(eventLeft.runs)} run` : '-';
+  }
+  if (nodes.runWinrate) {
+    nodes.runWinrate.textContent = efficiency?.total ? `${num(efficiency.winrate)}% · ${num(efficiency.success)}/${num(efficiency.total)}` : '-';
+  }
+  if (nodes.runAvgCoins) {
+    nodes.runAvgCoins.textContent = efficiency?.success ? num(Math.round(efficiency.avg_coins)) : '-';
+  }
 }
 
 async function busy(action) {
@@ -230,7 +310,7 @@ function send(message) {
 }
 
 function getChance(dungeon, profile) {
-  if (Number.isFinite(Number(dungeon.success_rate))) return Number(dungeon.success_rate);
+  if (dungeon?.success_rate !== null && dungeon?.success_rate !== undefined && Number.isFinite(Number(dungeon.success_rate))) return Number(dungeon.success_rate);
   const diff = RANKS.indexOf(dungeon.rank) - RANKS.indexOf(profile?.rank || 'F');
   if (diff <= 0) return 90;
   if (diff === 1) return 50;
@@ -238,6 +318,7 @@ function getChance(dungeon, profile) {
 }
 
 function getModeLabel(mode) {
+  if (mode === 'coins') return 'фарм монет';
   if (mode === 'highest') return 'максимальный ранг';
   if (mode === 'xp') return 'ожидаемый XP';
   if (mode === 'fast') return 'быстрый фарм';
@@ -246,6 +327,13 @@ function getModeLabel(mode) {
 
 function num(value) {
   return Number(value || 0).toLocaleString('ru-RU');
+}
+
+function formatDecimal(value) {
+  const number = Number(value || 0);
+  return number.toLocaleString('ru-RU', {
+    maximumFractionDigits: number >= 10 ? 1 : 2
+  });
 }
 
 function formatDate(value) {

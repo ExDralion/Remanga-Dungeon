@@ -252,6 +252,56 @@
       color: var(--muted);
     }
 
+    .farm-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .farm-main {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 132px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(45, 212, 191, .24);
+      background: linear-gradient(145deg, rgba(20, 184, 166, .14), rgba(15, 23, 42, .62));
+    }
+
+    .farm-main b {
+      display: block;
+      margin-top: 8px;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .farm-main small,
+    .farm-details small {
+      color: var(--muted);
+    }
+
+    .farm-details {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .farm-details div {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, .13);
+      background: rgba(255, 255, 255, .04);
+    }
+
+    .farm-details strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 18px;
+      line-height: 1.05;
+    }
+
     .hero-card {
       min-height: 272px;
       display: flex;
@@ -560,6 +610,23 @@
               </article>
             </div>
           </div>
+          <article class="panel farm-card">
+            <div class="farm-main">
+              <span class="nav-label">Фарм монет</span>
+              <b id="coinFarmRank">-</b>
+              <small id="coinFarmFormula">-</small>
+            </div>
+            <div class="farm-details">
+              <div><small>Монет / мин</small><strong id="coinFarmRate">-</strong></div>
+              <div><small>Ожидаемо за run</small><strong id="coinFarmExpected">-</strong></div>
+              <div><small>Монет / MP</small><strong id="coinFarmMp">-</strong></div>
+              <div><small>Лучший по MP</small><strong id="coinFarmByMp">-</strong></div>
+              <div><small>Прогноз 24ч</small><strong id="coinForecast24">-</strong></div>
+              <div><small>До конца</small><strong id="coinForecastEvent">-</strong></div>
+              <div><small>Winrate</small><strong id="runWinrate">-</strong></div>
+              <div><small>Среднее/run</small><strong id="runAvgCoins">-</strong></div>
+            </div>
+          </article>
         </section>
 
         <section class="view" data-view="dungeons">
@@ -570,15 +637,20 @@
 
           <article class="panel">
             <div class="toolbar">
+              <select id="selectedDungeon">
+                <option value="">Auto dungeon</option>
+              </select>
               <select id="mode">
                 <option value="safe">Безопасно: свой ранг</option>
                 <option value="xp">Максимум ожидаемого XP</option>
                 <option value="highest">Максимальный доступный ранг</option>
                 <option value="fast">Быстрый фарм</option>
+                <option value="coins">Фарм монет</option>
               </select>
               <label class="toggle"><input id="auto" type="checkbox"> Автоцикл</label>
             </div>
             <div class="buttons" style="margin-top:10px">
+              <button id="runSelected" class="action primary" type="button">Selected</button>
               <button id="run" class="action primary" type="button">Запустить цикл</button>
               <button id="batch" class="action primary" type="button">До ожидания</button>
               <button id="claim" class="action" type="button">Забрать</button>
@@ -629,6 +701,7 @@
               <label class="toggle"><input data-potion-mode="xp" type="checkbox"> Опыт</label>
               <label class="toggle"><input data-potion-mode="highest" type="checkbox"> Высший</label>
               <label class="toggle"><input data-potion-mode="fast" type="checkbox"> Фарм</label>
+              <label class="toggle"><input data-potion-mode="coins" type="checkbox"> Монеты</label>
             </div>
           </article>
         </section>

@@ -50,6 +50,21 @@
               <article><span>Данжи</span><b data-role="success">-</b><small>успешно пройдено</small></article>
               <article><span>Провалы</span><b data-role="failed">-</b><small>неудачных заходов</small></article>
             </div>
+            <article class="smdh-panel smdh-farm">
+              <span class="smdh-nav-label">Фарм монет</span>
+              <b data-role="coinFarmRank">-</b>
+              <small data-role="coinFarmFormula">-</small>
+              <div>
+                <span><small>Монет / мин</small><strong data-role="coinFarmRate">-</strong></span>
+                <span><small>Ожидаемо</small><strong data-role="coinFarmExpected">-</strong></span>
+                <span><small>Монет / MP</small><strong data-role="coinFarmMp">-</strong></span>
+                <span><small>По MP</small><strong data-role="coinFarmByMp">-</strong></span>
+                <span><small>24ч</small><strong data-role="coinForecast24">-</strong></span>
+                <span><small>До конца</small><strong data-role="coinForecastEvent">-</strong></span>
+                <span><small>Winrate</small><strong data-role="runWinrate">-</strong></span>
+                <span><small>Среднее</small><strong data-role="runAvgCoins">-</strong></span>
+              </div>
+            </article>
           </section>
           <section class="smdh-view" data-view="dungeons">
             <article id="smdh-status" class="smdh-panel">Загрузка...</article>
@@ -60,10 +75,15 @@
                   <option value="xp">Максимум ожидаемого XP</option>
                   <option value="highest">Максимальный доступный ранг</option>
                   <option value="fast">Быстрый фарм</option>
+                  <option value="coins">Фарм монет</option>
+                </select>
+                <select id="smdh-selected-dungeon">
+                  <option value="">Auto dungeon</option>
                 </select>
                 <label class="smdh-toggle"><input id="smdh-auto" type="checkbox"> Автоцикл</label>
               </div>
               <div class="smdh-actions">
+                <button data-action="selected" type="button">Selected</button>
                 <button data-action="run" type="button">Цикл</button>
                 <button data-action="batch" type="button">До ожидания</button>
                 <button data-action="claim" type="button">Забрать</button>
@@ -110,6 +130,7 @@
                 <label class="smdh-toggle"><input data-potion-mode="xp" type="checkbox"> Опыт</label>
                 <label class="smdh-toggle"><input data-potion-mode="highest" type="checkbox"> Высший</label>
                 <label class="smdh-toggle"><input data-potion-mode="fast" type="checkbox"> Фарм</label>
+                <label class="smdh-toggle"><input data-potion-mode="coins" type="checkbox"> Монеты</label>
               </div>
             </article>
           </section>
@@ -153,10 +174,10 @@
     .smdh-settings { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 9px; }
     .smdh-mode-potions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .smdh-actions { grid-template-columns: repeat(3, 1fr); margin-top: 9px; }
-    #smdh-mode, #smdh-potion-min-rank, .smdh-toggle, .smdh-actions button { border: 1px solid rgba(148,163,184,.16); border-radius: 12px; background: rgba(255,255,255,.045); color: #f5f7fb; padding: 9px; font-weight: 850; }
+    #smdh-mode, #smdh-selected-dungeon, #smdh-potion-min-rank, .smdh-toggle, .smdh-actions button { border: 1px solid rgba(148,163,184,.16); border-radius: 12px; background: rgba(255,255,255,.045); color: #f5f7fb; padding: 9px; font-weight: 850; }
     #smdh-mode { color-scheme: dark; background-color: #171d29; }
-    #smdh-potion-min-rank, #smdh-mode { color-scheme: dark; background-color: #171d29; }
-    #smdh-mode option, #smdh-potion-min-rank option { background: #171d29; color: #f5f7fb; }
+    #smdh-potion-min-rank, #smdh-mode, #smdh-selected-dungeon { color-scheme: dark; background-color: #171d29; }
+    #smdh-mode option, #smdh-selected-dungeon option, #smdh-potion-min-rank option { background: #171d29; color: #f5f7fb; }
     #smdh-potion-min-rank { grid-column: 1 / -1; min-height: 40px; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
     #smdh-potion-min-rank:hover { border-color: rgba(125,211,252,.38); background: rgba(35,45,62,.88); }
     .smdh-toggle {
@@ -206,6 +227,13 @@
     .smdh-toggle:has(input:checked)::before { background: rgba(16,185,129,.28); border-color: rgba(52,211,153,.58); }
     .smdh-toggle:has(input:checked)::after { background: #6ee7b7; transform: translate(12px, -50%); }
     .smdh-actions button { cursor: pointer; background: rgba(34,197,94,.13); color: #bbf7d0; }
+    .smdh-farm { display: grid; gap: 9px; border-color: rgba(45,212,191,.24); background: linear-gradient(145deg, rgba(20,184,166,.12), rgba(15,23,42,.8)); }
+    .smdh-farm b { font-size: 24px; line-height: 1; }
+    .smdh-farm > small { color: #9ca3af; }
+    .smdh-farm div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .smdh-farm div span { padding: 9px; border-radius: 11px; background: rgba(255,255,255,.04); border: 1px solid rgba(148,163,184,.13); }
+    .smdh-farm div small { display: block; color: #9ca3af; font-size: 10px; }
+    .smdh-farm div strong { display: block; margin-top: 4px; color: #f5f7fb; }
     #smdh-dungeons, #smdh-log { display: grid; gap: 7px; margin-top: 10px; }
     .smdh-dungeon-panel { min-height: 0; }
     #smdh-dungeons { max-height: min(310px, calc(100vh - 285px)); overflow: auto; padding-right: 3px; }
@@ -224,6 +252,7 @@
   const log = root.querySelector('#smdh-log');
   const dungeons = root.querySelector('#smdh-dungeons');
   const mode = root.querySelector('#smdh-mode');
+  const selectedDungeon = root.querySelector('#smdh-selected-dungeon');
   const auto = root.querySelector('#smdh-auto');
   const usePotions = root.querySelector('#smdh-use-potions');
   const autoClaim = root.querySelector('#smdh-auto-claim');
@@ -263,7 +292,7 @@
     await chrome.runtime.sendMessage({ type: 'smdh_set_mode', mode: mode.value });
     await refresh();
   });
-  [usePotions, autoClaim, autoMini, autoAdvent, potionMinRank, ...potionModeInputs].forEach(input => {
+  [usePotions, autoClaim, autoMini, autoAdvent, selectedDungeon, potionMinRank, ...potionModeInputs].forEach(input => {
     input.addEventListener('change', saveSettings);
   });
   setInterval(async () => {
@@ -278,15 +307,16 @@
       await refresh();
       return;
     }
-    const type = action === 'run' ? 'smdh_run_once'
-      : action === 'batch' ? 'smdh_run_until_blocked'
-        : action === 'claim' ? 'smdh_claim'
-          : action === 'advent' ? 'smdh_claim_advent'
-            : action === 'sync' ? 'smdh_sync_mana'
-              : action === 'clear' ? 'smdh_clear_logs'
-                : 'smdh_complete_mini_game';
+    const type = action === 'selected' ? 'smdh_run_selected'
+      : action === 'run' ? 'smdh_run_once'
+        : action === 'batch' ? 'smdh_run_until_blocked'
+          : action === 'claim' ? 'smdh_claim'
+            : action === 'advent' ? 'smdh_claim_advent'
+              : action === 'sync' ? 'smdh_sync_mana'
+                : action === 'clear' ? 'smdh_clear_logs'
+                  : 'smdh_complete_mini_game';
     status.textContent = 'Выполняю...';
-    const response = await chrome.runtime.sendMessage({ type, mode: mode.value });
+    const response = await chrome.runtime.sendMessage({ type, mode: mode.value, dungeonId: selectedDungeon.value });
     if (!response?.ok) status.textContent = response?.error || 'Ошибка';
     await refresh();
   });
@@ -324,6 +354,7 @@
         autoClaim: autoClaim.checked,
         autoMini: autoMini.checked,
         autoAdvent: autoAdvent.checked,
+        selectedDungeonId: selectedDungeon.value,
         potionMinRank: potionMinRank.value,
         potionModes
       }
@@ -342,7 +373,9 @@
     setText('success', num(profile.success_runs));
     setText('failed', num(profile.failed_runs));
     setText('coins', num(profile.coins));
+    renderCoinFarmPlan(state.farmPlan, state.forecast, state.efficiency);
     mode.value = stored.mode || 'safe';
+    renderDungeonSelect(state.dungeons || [], stored.selectedDungeonId);
     auto.checked = Boolean(stored.auto);
     usePotions.checked = stored.usePotions !== false;
     autoClaim.checked = stored.autoClaim !== false;
@@ -357,7 +390,7 @@
     status.innerHTML = !active && state.nextAction?.text
       ? `<strong>Следующее действие</strong><br><span>${escapeHtml(state.nextAction.text)}</span>`
       : active?.dungeon?.rank
-      ? `<strong>${escapeHtml(active.dungeon.rank)}-данж</strong><br><span>${active.game_type === 2 ? 'мини-игра ждет завершения' : `готовность ${escapeHtml(formatDate(active.ends_at))}`}</span>`
+      ? renderActiveRunStatus(active, state.activeRunDetails)
       : '<strong>Активного данжа нет</strong><br><span>Можно запускать следующий цикл.</span>';
     renderDungeons(state.dungeons || [], profile);
     log.innerHTML = (stored.logs || []).slice(0, 10).map(item => `<div>${escapeHtml(item.message)}</div>`).join('') || '<div>Лог пуст.</div>';
@@ -373,10 +406,21 @@
         <div class="smdh-dungeon ${locked ? 'locked' : ''}">
           <span class="smdh-rank">${escapeHtml(item.rank)}</span>
           <span>${num(item.mp_cost)} MP · ${formatDuration(Number(item.duration_seconds || 0) * 1000)}</span>
-          <strong>+${num(item.xp_reward)} XP</strong>
+          <strong>+${num(item.xp_reward)} XP<br>+${num(item.coin_reward)} монет</strong>
         </div>
       `;
     }).join('') || '<div class="smdh-dungeon">Подземелья не загружены.</div>';
+  }
+
+  function renderDungeonSelect(items, selectedId) {
+    const currentValue = String(selectedId || selectedDungeon.value || '');
+    const options = ['<option value="">Auto dungeon</option>'];
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!item?.id || !item?.rank) continue;
+      options.push(`<option value="${escapeHtml(item.id)}">${escapeHtml(item.rank)} · ${num(item.mp_cost)} MP · ${formatDuration(Number(item.duration_seconds || 0) * 1000)}</option>`);
+    }
+    selectedDungeon.innerHTML = options.join('');
+    selectedDungeon.value = [...selectedDungeon.options].some(option => option.value === currentValue) ? currentValue : '';
   }
 
   function setText(role, value) {
@@ -384,8 +428,49 @@
     if (node) node.textContent = value;
   }
 
+  function renderCoinFarmPlan(plan, forecast = null, efficiency = null) {
+    const best = plan?.best;
+    if (!best) {
+      setText('coinFarmRank', '-');
+      setText('coinFarmFormula', 'Нет доступных данжей для расчета.');
+      setText('coinFarmRate', '-');
+      setText('coinFarmExpected', '-');
+      setText('coinFarmMp', '-');
+      setText('coinFarmByMp', '-');
+      setText('coinForecast24', '-');
+      setText('coinForecastEvent', '-');
+      setText('runWinrate', '-');
+      setText('runAvgCoins', '-');
+      return;
+    }
+    const duration = formatDuration(Number(best.duration_seconds || 0) * 1000);
+    setText('coinFarmRank', `${best.rank}-данж`);
+    setText('coinFarmFormula', `${num(best.mp_cost)} MP · ${duration} · ${Math.round(Number(best.chance || 0))}% шанс · guild +${num(best.guild_bonus)}%${best.potion_text ? ` · ${best.potion_text}` : ''}`);
+    setText('coinFarmRate', formatDecimal(best.coins_per_minute));
+    setText('coinFarmExpected', num(Math.round(Number(best.expected_coins || 0))));
+    setText('coinFarmMp', formatDecimal(best.coins_per_mp));
+    setText('coinFarmByMp', plan?.bestByMp ? `${plan.bestByMp.rank} · ${formatDecimal(plan.bestByMp.coins_per_mp)}` : '-');
+    setText('coinForecast24', forecast?.next24h ? `${num(Math.round(forecast.next24h.coins))} / ${num(forecast.next24h.runs)} run` : '-');
+    setText('coinForecastEvent', forecast?.eventLeft ? `${num(Math.round(forecast.eventLeft.coins))} / ${num(forecast.eventLeft.runs)} run` : '-');
+    setText('runWinrate', efficiency?.total ? `${num(efficiency.winrate)}% · ${num(efficiency.success)}/${num(efficiency.total)}` : '-');
+    setText('runAvgCoins', efficiency?.success ? num(Math.round(efficiency.avg_coins)) : '-');
+  }
+
+  function renderActiveRunStatus(active, details = null) {
+    const base = `<strong>${escapeHtml(active.dungeon.rank)}-данж</strong><br><span>${active.game_type === 2 ? 'мини-игра ждет завершения' : `готовность ${escapeHtml(formatDate(active.ends_at))}`}</span>`;
+    if (!details) return base;
+    return `${base}<br><span>~${num(Math.round(details.expected_coins))} монет · ${num(details.xp_reward)} XP · ${Math.round(Number(details.chance || 0))}%</span><br><span>${escapeHtml(details.next_action || '')}</span>`;
+  }
+
   function num(value) {
     return Number(value || 0).toLocaleString('ru-RU');
+  }
+
+  function formatDecimal(value) {
+    const number = Number(value || 0);
+    return number.toLocaleString('ru-RU', {
+      maximumFractionDigits: number >= 10 ? 1 : 2
+    });
   }
 
   function formatDate(value) {

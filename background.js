@@ -18,12 +18,14 @@ const DEFAULT_STORE = {
     safe: true,
     xp: true,
     highest: true,
-    fast: true
+    fast: true,
+    coins: true
   },
   potionMinRank: 'F',
   autoAdvent: true,
   autoClaim: true,
   autoMini: true,
+  selectedDungeonId: null,
   retry: null,
   lastAdventClaimDate: null,
   lastAutoActionAt: null
@@ -89,6 +91,8 @@ async function handleMessage(message) {
       return { result: await runAutoTick({ source: 'page' }) };
     case 'smdh_run_once':
       return { result: await runDungeonCycle(message.mode || 'safe') };
+    case 'smdh_run_selected':
+      return { result: await runUntilBlocked('selected', { selectedDungeonId: message.dungeonId }) };
     case 'smdh_run_until_blocked':
       return { result: await runUntilBlocked(message.mode || 'safe') };
     case 'smdh_claim':
@@ -155,25 +159,46 @@ async function getFullState() {
   const event = eventItems.find(item => item.name === 'dungeon-hunters') || FALLBACK_EVENT;
   const runItems = Array.isArray(runs?.results) ? runs.results : [];
   const potionItems = Array.isArray(potions?.results) ? potions.results : [];
+  const normalizedProfile = normalizeProfile(profile, eventBalance);
   const mana = buildManaState(stored.mana, profile);
   if (!profile?.error && mana.snapshot) {
     await updateStore({ mana: mana.snapshot });
   }
+  const dungeonItems = Array.isArray(dungeons?.results) ? dungeons.results : [];
+  const farmPlan = buildCoinFarmPlan({
+    profile: normalizedProfile,
+    dungeons: dungeonItems,
+    potions: potionItems,
+    stored
+  });
+  const activeRun = getActiveRun(runItems);
+  const forecast = buildCoinForecast({
+    profile: normalizedProfile,
+    event,
+    mana,
+    farmPlan,
+    activeRun
+  });
+  const efficiency = buildRunEfficiency(runItems, normalizedProfile);
   return {
     stored: {
       ...stored,
       mana: mana.snapshot
     },
-    profile,
-    dungeons: Array.isArray(dungeons?.results) ? dungeons.results : [],
+    profile: normalizedProfile,
+    dungeons: dungeonItems,
     runs: runItems,
     potions: potionItems,
     eventBalance,
     event,
+    farmPlan,
+    forecast,
+    efficiency,
     mana,
-    activeRun: getActiveRun(runItems),
+    activeRun,
+    activeRunDetails: buildActiveRunDetails(activeRun, normalizedProfile, stored),
     nextReadyAt: getNextReadyAt(runItems),
-    nextAction: buildNextAction({ profile, dungeons: Array.isArray(dungeons?.results) ? dungeons.results : [], potions: potionItems, runs: runItems, mana, stored })
+    nextAction: buildNextAction({ profile: normalizedProfile, dungeons: dungeonItems, potions: potionItems, runs: runItems, mana, stored })
   };
 }
 
@@ -186,6 +211,56 @@ function getNextReadyAt(runs) {
   return active?.ends_at || null;
 }
 
+function normalizeProfile(profile, eventBalance) {
+  if (!profile || profile.error) return profile || {};
+  const coins = extractCoinBalance(profile, eventBalance);
+  return {
+    ...profile,
+    coins,
+    coin_balance: coins
+  };
+}
+
+function extractCoinBalance(profile, eventBalance) {
+  const directFields = [
+    profile?.coins,
+    profile?.coin_balance,
+    profile?.event_points,
+    profile?.event_points_balance,
+    profile?.points,
+    profile?.balance
+  ];
+
+  for (const value of directFields) {
+    const number = normalizeNumber(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+
+  const candidates = [
+    eventBalance,
+    ...(Array.isArray(eventBalance?.results) ? eventBalance.results : []),
+    ...(Array.isArray(eventBalance) ? eventBalance : [])
+  ].filter(Boolean);
+
+  const dungeonBalance = candidates.find(item => {
+    const source = `${item?.event?.name || ''} ${item?.event_name || ''} ${item?.name || ''} ${item?.slug || ''}`.toLowerCase();
+    return source.includes('dungeon');
+  }) || candidates[0];
+
+  for (const value of [
+    dungeonBalance?.balance,
+    dungeonBalance?.points,
+    dungeonBalance?.amount,
+    dungeonBalance?.value,
+    dungeonBalance?.coins
+  ]) {
+    const number = normalizeNumber(value);
+    if (Number.isFinite(number) && number >= 0) return number;
+  }
+
+  return 0;
+}
+
 async function runAutoTick(options = {}) {
   const stored = await getStore();
   if (!stored.auto) return null;
@@ -195,7 +270,10 @@ async function runAutoTick(options = {}) {
 
   try {
     if (stored.autoAdvent) await claimDailyAdventOnce();
-    const result = await runUntilBlocked(stored.mode || 'safe', { auto: true });
+    const result = await runUntilBlocked(
+      stored.selectedDungeonId ? 'selected' : (stored.mode || 'safe'),
+      { auto: true, selectedDungeonId: stored.selectedDungeonId }
+    );
     await updateStore({
       retry: null,
       lastAutoActionAt: new Date().toISOString()
@@ -207,9 +285,9 @@ async function runAutoTick(options = {}) {
   }
 }
 
-async function runDungeonCycle(mode = 'safe') {
+async function runDungeonCycle(mode = 'safe', options = {}) {
   mode = normalizeMode(mode);
-  await updateStore({ mode });
+  if (mode !== 'selected') await updateStore({ mode });
   const state = await getFullState();
   if (state.profile?.error) throw new Error(`Профиль события не загружен: ${state.profile.error}`);
   if (state.activeRun) {
@@ -232,12 +310,17 @@ async function runDungeonCycle(mode = 'safe') {
     return { action: 'wait', run: state.activeRun, message: waitText };
   }
 
-  const dungeon = chooseDungeon(state, mode, { ignoreMp: true });
+  const dungeon = chooseCycleDungeon(state, mode, {
+    ignoreMp: true,
+    selectedDungeonId: options.selectedDungeonId,
+    throwOnLocked: mode === 'selected'
+  });
   if (!dungeon) {
     await appendLog('Нет подходящего данжа для запуска.', 'idle');
     return { action: 'none' };
   }
-  const potionPlan = buildPotionPlan(state, dungeon, mode);
+  const potionMode = mode === 'selected' ? (state.stored?.mode || 'safe') : mode;
+  const potionPlan = buildPotionPlan(state, dungeon, potionMode);
   const effectiveCost = potionPlan.stats.mp_cost;
   const currentMp = getTrackedMp(state);
   const waitMs = getManaWaitMs(state.mana, effectiveCost);
@@ -259,7 +342,7 @@ async function runDungeonCycle(mode = 'safe') {
 async function runUntilBlocked(mode = 'safe', options = {}) {
   const results = [];
   for (let index = 0; index < LOOP_LIMIT; index += 1) {
-    const result = await runDungeonCycle(mode);
+    const result = await runDungeonCycle(mode, options);
     results.push(result);
     if (!['mini_game_completed', 'claimed'].includes(result?.action)) {
       break;
@@ -272,7 +355,31 @@ async function runUntilBlocked(mode = 'safe', options = {}) {
 }
 
 function normalizeMode(mode) {
-  return ['safe', 'xp', 'highest', 'fast'].includes(mode) ? mode : 'safe';
+  return ['safe', 'xp', 'highest', 'fast', 'coins', 'selected'].includes(mode) ? mode : 'safe';
+}
+
+function chooseCycleDungeon(state, mode, options = {}) {
+  const selectedId = options.selectedDungeonId ?? state?.stored?.selectedDungeonId;
+  const selected = chooseSelectedDungeon(state, selectedId, options);
+  if (selected) return selected;
+  if (mode === 'selected') return null;
+  return chooseDungeon(state, mode === 'selected' ? (state?.stored?.mode || 'safe') : mode, options);
+}
+
+function chooseSelectedDungeon(state, selectedDungeonId, options = {}) {
+  const id = normalizeNumber(selectedDungeonId);
+  if (!id || !state || !state.profile || !Array.isArray(state.dungeons)) return null;
+  const dungeon = state.dungeons.find(item => normalizeNumber(item?.id) === id);
+  if (!dungeon) return null;
+  const rankIndex = RANKS.indexOf(state.profile?.rank || 'F');
+  if (RANKS.indexOf(dungeon.rank) > rankIndex + 1) {
+    if (options.throwOnLocked) {
+      throw new Error(`Selected dungeon ${dungeon.rank} is locked for rank ${state.profile?.rank || '?'}.`);
+    }
+    return null;
+  }
+  if (!options.ignoreMp && Number(dungeon.mp_cost || 0) > getTrackedMp(state)) return null;
+  return dungeon;
 }
 
 function chooseDungeon(state, mode, options = {}) {
@@ -296,6 +403,21 @@ function chooseDungeon(state, mode, options = {}) {
     return available.sort((a, b) => Number(a.duration_seconds || 0) - Number(b.duration_seconds || 0) || RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
   }
 
+  if (mode === 'coins') {
+    const plan = buildCoinFarmPlan({
+      ...state,
+      dungeons: available,
+      stored: {
+        ...(state.stored || {}),
+        mode: 'coins'
+      }
+    });
+    if (plan?.best?.dungeon?.id) {
+      return available.find(dungeon => Number(dungeon.id) === Number(plan.best.dungeon.id)) || plan.best.dungeon;
+    }
+    return available.sort((a, b) => expectedCoinsPerMinute(b, state.profile) - expectedCoinsPerMinute(a, state.profile))[0];
+  }
+
   const sameRank = available.find(dungeon => dungeon.rank === state.profile.rank);
   return sameRank || available.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
 }
@@ -306,7 +428,11 @@ function buildNextAction(state) {
   if (active?.game_type === 2) return { type: 'mini', text: `${active.dungeon?.rank || '?'}-данж: закрыть мини-игру` };
   if (active && isRunReady(active)) return { type: 'claim', text: `${active.dungeon?.rank || '?'}-данж: забрать награду` };
   if (active) return { type: 'wait', text: `${active.dungeon?.rank || '?'}-данж идет еще ${formatWait(active.ends_at)}` };
-  const dungeon = chooseDungeon(state, state.stored?.mode || 'safe', { ignoreMp: true });
+  const dungeon = chooseCycleDungeon(
+    state,
+    state.stored?.selectedDungeonId ? 'selected' : (state.stored?.mode || 'safe'),
+    { ignoreMp: true }
+  );
   if (!dungeon) return { type: 'none', text: 'Нет доступного данжа' };
   const currentMp = getTrackedMp(state);
   if (currentMp < Number(dungeon.mp_cost || 0)) {
@@ -316,16 +442,233 @@ function buildNextAction(state) {
 }
 
 function expectedXp(dungeon, profile) {
-  const chance = getSuccessChance(dungeon, profile) / 100;
+  const chance = getDungeonSuccessChance(dungeon, profile) / 100;
   return Number(dungeon.xp_reward || 0) * chance;
 }
 
-function getSuccessChance(dungeon, profile) {
-  if (Number.isFinite(Number(dungeon.success_rate))) return Number(dungeon.success_rate);
+function expectedCoins(dungeon, profile) {
+  return normalizeNumber(dungeon?.coin_reward) * getGuildCoinMultiplier(profile) * (getDungeonSuccessChance(dungeon, profile) / 100);
+}
+
+function expectedCoinsPerMinute(dungeon, profile) {
+  const durationMinutes = Math.max(1 / 60, normalizeNumber(dungeon?.duration_seconds) / 60);
+  return expectedCoins(dungeon, profile) / durationMinutes;
+}
+
+function buildCoinFarmPlan(state) {
+  const profile = state?.profile || {};
+  const rankIndex = RANKS.indexOf(profile.rank || 'F');
+  const dungeons = Array.isArray(state?.dungeons) ? state.dungeons : [];
+  const candidates = dungeons
+    .filter(dungeon => dungeon && dungeon.rank && RANKS.indexOf(dungeon.rank) >= 0)
+    .filter(dungeon => RANKS.indexOf(dungeon.rank) <= rankIndex + 1)
+    .map(dungeon => {
+      const potionPlan = buildPotionPlan(
+        {
+          ...state,
+          stored: {
+            ...(state?.stored || {}),
+            mode: 'coins'
+          }
+        },
+        dungeon,
+        'coins'
+      );
+      const stats = potionPlan.stats || dungeon;
+      const chance = Number.isFinite(Number(stats.success_rate)) && Number(stats.success_rate) > 0
+        ? Number(stats.success_rate)
+        : getDungeonSuccessChance(dungeon, profile);
+      const durationSeconds = Math.max(1, normalizeNumber(stats.duration_seconds));
+      const mpCost = Math.max(0, normalizeNumber(stats.mp_cost));
+      const baseCoinReward = Math.max(0, normalizeNumber(stats.coin_reward));
+      const coinReward = Math.round(baseCoinReward * getGuildCoinMultiplier(profile));
+      const expectedCoinReward = coinReward * (chance / 100);
+      const coinsPerMinute = expectedCoinReward / (durationSeconds / 60);
+      const coinsPerMp = mpCost > 0 ? expectedCoinReward / mpCost : expectedCoinReward;
+      return {
+        dungeon,
+        rank: dungeon.rank,
+        chance,
+        duration_seconds: durationSeconds,
+        mp_cost: mpCost,
+        base_coin_reward: baseCoinReward,
+        guild_bonus: normalizeNumber(profile?.guild_bonus),
+        coin_reward: coinReward,
+        expected_coins: expectedCoinReward,
+        coins_per_minute: coinsPerMinute,
+        coins_per_mp: coinsPerMp,
+        potions: potionPlan.selected || [],
+        potion_text: potionPlan.text || ''
+      };
+    })
+    .sort((a, b) =>
+      b.coins_per_minute - a.coins_per_minute ||
+      b.expected_coins - a.expected_coins ||
+      a.duration_seconds - b.duration_seconds
+    );
+
+  const best = candidates[0] || null;
+  const bestByMp = [...candidates].sort((a, b) =>
+    b.coins_per_mp - a.coins_per_mp ||
+    b.expected_coins - a.expected_coins ||
+    a.duration_seconds - b.duration_seconds
+  )[0] || null;
+
+  return {
+    best,
+    bestByMp,
+    candidates
+  };
+}
+
+function getGuildCoinMultiplier(profile) {
+  return 1 + Math.max(0, normalizeNumber(profile?.guild_bonus)) / 100;
+}
+
+function buildCoinForecast({ profile, event, mana, farmPlan, activeRun }) {
+  const best = farmPlan?.best || null;
+  if (!best) return null;
+  const now = Date.now();
+  const eventEnd = Date.parse(event?.date_end || '');
+  const remainingMs = Number.isFinite(eventEnd) ? Math.max(0, eventEnd - now) : 0;
+  const next24h = simulateCoinWindow(24 * 60 * 60 * 1000, best, profile, mana, activeRun);
+  const eventLeft = remainingMs > 0 ? simulateCoinWindow(remainingMs, best, profile, mana, activeRun) : null;
+  return {
+    dungeon: best.rank,
+    next24h,
+    eventLeft,
+    remainingMs
+  };
+}
+
+function simulateCoinWindow(windowMs, farm, profile, mana, activeRun) {
+  const durationMs = Math.max(1000, normalizeNumber(farm?.duration_seconds) * 1000);
+  const mpCost = Math.max(0, normalizeNumber(farm?.mp_cost));
+  const expectedCoins = Number(farm?.expected_coins || 0);
+  const maxMp = Math.max(0, normalizeNumber(profile?.max_mp));
+  const regen = Math.max(1, normalizeNumber(profile?.mp_regen) || 1);
+  const regenInterval = MP_REGEN_INTERVAL_MS;
+  let time = 0;
+  let mp = Math.max(0, normalizeNumber(mana?.estimated ?? profile?.current_mp));
+  let runs = 0;
+  let coins = 0;
+
+  if (activeRun?.status === 1 && !activeRun.is_reward_claimed) {
+    const activeLeft = activeRun.game_type === 2 ? 0 : Math.max(0, Date.parse(activeRun.ends_at || '') - Date.now());
+    if (activeLeft < windowMs) {
+      time += activeLeft;
+      coins += normalizeNumber(activeRun.dungeon?.coin_reward) * getGuildCoinMultiplier(profile) * (getDungeonSuccessChance(activeRun.dungeon || {}, profile) / 100);
+    } else {
+      return { runs: 0, coins: 0, coins_per_hour: 0 };
+    }
+  }
+
+  while (time + durationMs <= windowMs) {
+    if (mpCost > 0 && mp < mpCost) {
+      const missing = mpCost - mp;
+      const waitTicks = Math.ceil(missing / regen);
+      const waitMs = waitTicks * regenInterval;
+      if (time + waitMs + durationMs > windowMs) break;
+      time += waitMs;
+      mp = Math.min(maxMp, mp + waitTicks * regen);
+    }
+
+    mp = Math.max(0, mp - mpCost);
+    time += durationMs;
+    const regenTicks = Math.floor(durationMs / regenInterval);
+    mp = Math.min(maxMp, mp + regenTicks * regen);
+    runs += 1;
+    coins += expectedCoins;
+  }
+
+  return {
+    runs,
+    coins,
+    coins_per_hour: windowMs > 0 ? coins / (windowMs / 3600000) : 0
+  };
+}
+
+function buildRunEfficiency(runs, profile) {
+  const items = Array.isArray(runs) ? runs.filter(run => run?.dungeon?.rank) : [];
+  const completed = items.filter(run => run.status === 2 || run.status === 3);
+  const success = completed.filter(run => run.status === 2).length;
+  const failed = completed.filter(run => run.status === 3).length;
+  const expectedCoins = completed.reduce((sum, run) => {
+    if (run.status !== 2) return sum;
+    return sum + normalizeNumber(run.dungeon?.coin_reward) * getGuildCoinMultiplier(profile);
+  }, 0);
+  const byRank = {};
+  for (const run of completed) {
+    const rank = run.dungeon.rank;
+    if (!byRank[rank]) byRank[rank] = { rank, total: 0, success: 0, failed: 0, coins: 0 };
+    byRank[rank].total += 1;
+    if (run.status === 2) {
+      byRank[rank].success += 1;
+      byRank[rank].coins += normalizeNumber(run.dungeon?.coin_reward) * getGuildCoinMultiplier(profile);
+    } else if (run.status === 3) {
+      byRank[rank].failed += 1;
+    }
+  }
+
+  return {
+    total: completed.length,
+    success,
+    failed,
+    winrate: completed.length ? Math.round((success / completed.length) * 100) : 0,
+    expected_coins: expectedCoins,
+    avg_coins: success ? expectedCoins / success : 0,
+    byRank: Object.values(byRank).sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))
+  };
+}
+
+function buildActiveRunDetails(run, profile, stored = {}) {
+  if (!run) return null;
+  const isMini = run.game_type === 2;
+  const ready = !isMini && isRunReady(run);
+  const baseCoins = normalizeNumber(run.dungeon?.coin_reward);
+  const coins = Math.round(baseCoins * getGuildCoinMultiplier(profile));
+  const runSuccessRate = run.dungeon?.success_rate;
+  const chance = runSuccessRate !== null && runSuccessRate !== undefined && Number.isFinite(Number(runSuccessRate))
+    ? Number(runSuccessRate)
+    : (() => {
+      const diff = RANKS.indexOf(run.dungeon?.rank || 'F') - RANKS.indexOf(profile?.rank || 'F');
+      if (diff <= 0) return 90;
+      if (diff === 1) return 50;
+      return 0;
+    })();
+  return {
+    rank: run.dungeon?.rank || '?',
+    isMini,
+    ready,
+    ends_at: run.ends_at || null,
+    status: run.status,
+    auto_claim: stored.autoClaim !== false,
+    auto_mini: stored.autoMini !== false,
+    xp_reward: normalizeNumber(run.dungeon?.xp_reward),
+    base_coin_reward: baseCoins,
+    coin_reward: coins,
+    chance,
+    expected_coins: coins * (chance / 100),
+    next_action: isMini
+      ? (stored.autoMini === false ? 'Мини-игра ждет ручного завершения.' : 'Мини-игра будет закрыта автоматически.')
+      : ready
+        ? (stored.autoClaim === false ? 'Награда готова, автосбор выключен.' : 'Награда готова к автосбору.')
+        : `Ожидание до ${formatWait(run.ends_at)}.`
+  };
+}
+
+function getDungeonSuccessChance(dungeon, profile) {
+  if (dungeon?.success_rate !== null && dungeon?.success_rate !== undefined && Number.isFinite(Number(dungeon.success_rate))) {
+    return Number(dungeon.success_rate);
+  }
   const diff = RANKS.indexOf(dungeon.rank) - RANKS.indexOf(profile?.rank || 'F');
   if (diff <= 0) return 90;
   if (diff === 1) return 50;
   return 0;
+}
+
+function getSuccessChance(dungeon, profile) {
+  return getDungeonSuccessChance(dungeon, profile);
 }
 
 function buildPotionPlan(state, dungeon, mode = 'safe') {
@@ -339,7 +682,7 @@ function buildPotionPlan(state, dungeon, mode = 'safe') {
     body,
     selected,
     effects,
-    stats: applyPotionEffects(dungeon, effects),
+    stats: applyPotionEffects(dungeon, effects, state?.profile || {}),
     text: selected.map(formatPotionName).join(', ')
   };
 }
@@ -406,9 +749,9 @@ function mergePotionEffects(userPotions) {
   }, { speed_multiplier: 1 });
 }
 
-function applyPotionEffects(dungeon, effects) {
+function applyPotionEffects(dungeon, effects, profile = {}) {
   const speed = Math.max(1, Number(effects?.speed_multiplier || 1));
-  const baseSuccess = Number.isFinite(Number(dungeon?.success_rate)) ? Number(dungeon.success_rate) : 0;
+  const baseSuccess = getDungeonSuccessChance(dungeon, profile);
   const coinBonus = normalizeNumber(effects?.coin_bonus);
   return {
     mp_cost: Math.max(0, normalizeNumber(dungeon?.mp_cost) - normalizeNumber(effects?.mp_restore)),
@@ -477,7 +820,7 @@ async function getAdventState() {
     ...item,
     status: getAdventStatus(item, openedIds)
   }));
-  const claimable = items.filter(item => item.status === 'current');
+  const claimable = items.filter(item => isAdventClaimableStatus(item.status));
   return {
     items,
     openedIds: [...openedIds],
@@ -550,6 +893,10 @@ function getAdventStatus(item, openedIds, now = Date.now()) {
   if (hours < 24) return 'current';
   if (hours < 48) return 'missed_precurrent';
   return 'missed';
+}
+
+function isAdventClaimableStatus(status) {
+  return status === 'current' || status === 'missed_precurrent';
 }
 
 function parseAdventDate(value) {
@@ -731,13 +1078,14 @@ async function updateSettings(settings) {
   if ('autoAdvent' in settings) patch.autoAdvent = Boolean(settings.autoAdvent);
   if ('autoClaim' in settings) patch.autoClaim = Boolean(settings.autoClaim);
   if ('autoMini' in settings) patch.autoMini = Boolean(settings.autoMini);
+  if ('selectedDungeonId' in settings) patch.selectedDungeonId = normalizeNumber(settings.selectedDungeonId) || null;
   if ('potionMinRank' in settings && RANKS.includes(settings.potionMinRank)) patch.potionMinRank = settings.potionMinRank;
   if (settings.potionModes && typeof settings.potionModes === 'object') {
     const current = (await getStore()).potionModes || {};
     patch.potionModes = {
       ...current,
       ...Object.fromEntries(Object.entries(settings.potionModes)
-        .filter(([key]) => ['safe', 'xp', 'highest', 'fast'].includes(key))
+        .filter(([key]) => ['safe', 'xp', 'highest', 'fast', 'coins'].includes(key))
         .map(([key, value]) => [key, Boolean(value)]))
     };
   }
