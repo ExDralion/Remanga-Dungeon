@@ -363,6 +363,12 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
     await appendLog('Нет подходящего данжа для запуска.', 'idle');
     return { action: 'none' };
   }
+  const activeSameDungeon = findActiveRunByDungeonId(activeRuns, dungeon.id);
+  if (activeSameDungeon) {
+    const message = `${dungeon.rank}-данж уже активен, пропускаю.`;
+    await appendLog(message, 'idle');
+    return { action: 'already_active', dungeon, run: activeSameDungeon, message };
+  }
   const potionMode = mode === 'selected' ? (state.stored?.mode || 'safe') : mode;
   const potionPlan = buildPotionPlan(state, dungeon, potionMode);
   const effectiveCost = potionPlan.stats.mp_cost;
@@ -379,6 +385,11 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
     run = await api(`/dungeon/${dungeon.id}/enter/`, { method: 'POST', body: potionPlan.body });
   } catch (error) {
     const message = error?.message || String(error);
+    if (isAlreadyRunningError(message)) {
+      const skipMessage = `${dungeon.rank}-данж уже активен, пропускаю.`;
+      await appendLog(skipMessage, 'idle');
+      return { action: 'already_active', dungeon, message: skipMessage, error: message, potions: potionPlan.selected };
+    }
     await appendLog(`Запуск ${dungeon.rank}-данжа остановлен: ${message}`, 'idle');
     return { action: 'start_blocked', dungeon, message, potions: potionPlan.selected };
   }
@@ -492,9 +503,11 @@ function chooseSelectedDungeon(state, selectedDungeonId, options = {}) {
 function chooseDungeon(state, mode, options = {}) {
   if (!state || !state.profile || !Array.isArray(state.dungeons)) return null;
   const rankIndex = RANKS.indexOf(state.profile?.rank || 'F');
+  const activeDungeonIds = new Set((state.activeRuns || []).map(getRunDungeonId).filter(Boolean));
   const available = state.dungeons
     .filter(dungeon => dungeon && dungeon.rank && RANKS.indexOf(dungeon.rank) >= 0)
     .filter(dungeon => RANKS.indexOf(dungeon.rank) <= rankIndex + 1)
+    .filter(dungeon => options.includeActive || !activeDungeonIds.has(normalizeNumber(dungeon.id)))
     .filter(dungeon => options.ignoreMp || Number(dungeon.mp_cost || 0) <= getTrackedMp(state));
   if (!available.length) return null;
 
@@ -1140,6 +1153,20 @@ async function refreshManaSnapshot() {
 function normalizeNumber(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? Math.floor(number) : 0;
+}
+
+function getRunDungeonId(run) {
+  return normalizeNumber(run?.dungeon?.id ?? run?.dungeon_id);
+}
+
+function findActiveRunByDungeonId(runs, dungeonId) {
+  const id = normalizeNumber(dungeonId);
+  if (!id) return null;
+  return (Array.isArray(runs) ? runs : []).find(run => getRunDungeonId(run) === id) || null;
+}
+
+function isAlreadyRunningError(message) {
+  return /уже\s+проходите|already/i.test(String(message || ''));
 }
 
 function normalizeDungeonIds(value) {

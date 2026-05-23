@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SailorM Dungeon Hunters",
   "description": "Автоматизация события Охотники подземелий на ReManga.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "permissions": [
     "alarms",
     "storage",
