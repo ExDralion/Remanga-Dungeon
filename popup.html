@@ -470,12 +470,12 @@
       background: rgba(35, 45, 62, .88);
     }
 
-    .dungeon-list, .log {
+    .dungeon-list, .multi-list, .log {
       display: grid;
       gap: 8px;
     }
 
-    .dungeon {
+    .dungeon, .multi-option {
       display: grid;
       grid-template-columns: 44px 1fr auto;
       align-items: center;
@@ -486,7 +486,30 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .dungeon.locked { opacity: .45; }
+    .multi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .multi-option {
+      position: relative;
+      cursor: pointer;
+      grid-template-columns: 34px 44px 1fr auto;
+    }
+
+    .multi-option input {
+      width: 18px;
+      height: 18px;
+      accent-color: #6ee7b7;
+    }
+
+    .multi-option small {
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .dungeon.locked, .multi-option.locked { opacity: .45; }
 
     .rank {
       min-width: 38px;
@@ -498,7 +521,7 @@
       font-weight: 950;
     }
 
-    .dungeon em {
+    .dungeon em, .multi-option em {
       display: block;
       margin-top: 2px;
       color: var(--muted);
@@ -539,6 +562,10 @@
         <button class="tab" type="button" data-tab="dungeons">
           <span class="nav-icon">DG</span>
           <span class="nav-copy"><strong>Dungeons</strong><span>Прохождение</span></span>
+        </button>
+        <button class="tab" type="button" data-tab="multi">
+          <span class="nav-icon">MD</span>
+          <span class="nav-copy"><strong>Multi</strong><span>Пачка данжей</span></span>
         </button>
         <button class="tab" type="button" data-tab="settings">
           <span class="nav-icon">ST</span>
@@ -671,6 +698,31 @@
           <article class="panel">
             <span class="nav-label">Лог</span>
             <div id="log" class="log" style="margin-top:10px"></div>
+          </article>
+        </section>
+
+        <section class="view" data-view="multi">
+          <article class="panel active-run">
+            <span class="nav-label">Multi Dungeons</span>
+            <div>Выбери данжи для разового запуска и отдельный набор для цикла. Мини-игры и готовые награды обрабатываются перед каждым новым запуском.</div>
+          </article>
+
+          <div class="multi-grid">
+            <article class="panel">
+              <span class="nav-label">Запустить сейчас</span>
+              <div id="multiLaunchList" class="multi-list" style="margin-top:10px"></div>
+            </article>
+            <article class="panel">
+              <span class="nav-label">Закинуть в цикл</span>
+              <div id="multiCycleList" class="multi-list" style="margin-top:10px"></div>
+            </article>
+          </div>
+
+          <article class="panel">
+            <div class="buttons">
+              <button id="runMultiLaunch" class="action primary" type="button">Запустить выбранные</button>
+              <button id="runMultiCycle" class="action primary" type="button">Цикл выбранных</button>
+            </div>
           </article>
         </section>
 

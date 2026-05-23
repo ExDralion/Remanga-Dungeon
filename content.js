@@ -23,6 +23,10 @@
             <span class="smdh-nav-icon">DG</span>
             <span><strong>Dungeons</strong><small>Прохождение</small></span>
           </button>
+          <button class="smdh-tab" data-tab="multi" type="button">
+            <span class="smdh-nav-icon">MD</span>
+            <span><strong>Multi</strong><small>Пачка данжей</small></span>
+          </button>
           <button class="smdh-tab" data-tab="settings" type="button">
             <span class="smdh-nav-icon">ST</span>
             <span><strong>Settings</strong><small>Автопилот и зелья</small></span>
@@ -101,6 +105,28 @@
             <article class="smdh-panel">
               <span class="smdh-nav-label">Лог</span>
               <div id="smdh-log"></div>
+            </article>
+          </section>
+          <section class="smdh-view" data-view="multi">
+            <article class="smdh-panel">
+              <span class="smdh-nav-label">Multi Dungeons</span>
+              <p class="smdh-help">Выбери данжи для разового запуска и отдельный набор для цикла. Мини-игры и готовые награды обрабатываются перед каждым новым запуском.</p>
+            </article>
+            <div class="smdh-multi-grid">
+              <article class="smdh-panel">
+                <span class="smdh-nav-label">Запустить сейчас</span>
+                <div id="smdh-multi-launch"></div>
+              </article>
+              <article class="smdh-panel">
+                <span class="smdh-nav-label">Закинуть в цикл</span>
+                <div id="smdh-multi-cycle"></div>
+              </article>
+            </div>
+            <article class="smdh-panel">
+              <div class="smdh-actions">
+                <button data-action="multi-launch" type="button">Запустить выбранные</button>
+                <button data-action="multi-cycle" type="button">Цикл выбранных</button>
+              </div>
             </article>
           </section>
           <section class="smdh-view" data-view="settings">
@@ -234,12 +260,17 @@
     .smdh-farm div span { padding: 9px; border-radius: 11px; background: rgba(255,255,255,.04); border: 1px solid rgba(148,163,184,.13); }
     .smdh-farm div small { display: block; color: #9ca3af; font-size: 10px; }
     .smdh-farm div strong { display: block; margin-top: 4px; color: #f5f7fb; }
-    #smdh-dungeons, #smdh-log { display: grid; gap: 7px; margin-top: 10px; }
+    #smdh-dungeons, #smdh-multi-launch, #smdh-multi-cycle, #smdh-log { display: grid; gap: 7px; margin-top: 10px; }
     .smdh-dungeon-panel { min-height: 0; }
-    #smdh-dungeons { max-height: min(310px, calc(100vh - 285px)); overflow: auto; padding-right: 3px; }
-    .smdh-dungeon, #smdh-log div { padding: 8px; border-radius: 11px; background: rgba(255,255,255,.04); color: #cbd5e1; }
+    #smdh-dungeons, #smdh-multi-launch, #smdh-multi-cycle { max-height: min(310px, calc(100vh - 285px)); overflow: auto; padding-right: 3px; }
+    .smdh-dungeon, .smdh-multi-option, #smdh-log div { padding: 8px; border-radius: 11px; background: rgba(255,255,255,.04); color: #cbd5e1; }
     .smdh-dungeon { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 9px; }
-    .smdh-dungeon.locked { opacity: .45; }
+    .smdh-multi-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .smdh-multi-option { display: grid; grid-template-columns: 24px 38px 1fr; align-items: center; gap: 8px; cursor: pointer; border: 1px solid rgba(148,163,184,.12); }
+    .smdh-multi-option input { width: 16px; height: 16px; accent-color: #6ee7b7; }
+    .smdh-multi-option small { display: block; color: #94a3b8; }
+    .smdh-help { margin: 7px 0 0; color: #94a3b8; }
+    .smdh-dungeon.locked, .smdh-multi-option.locked { opacity: .45; }
     .smdh-rank { padding: 7px; border-radius: 9px; background: rgba(125,211,252,.12); color: #7dd3fc; text-align: center; font-weight: 950; }
     #smdh-log { max-height: 145px; overflow: auto; }
   `;
@@ -251,6 +282,8 @@
   const status = root.querySelector('#smdh-status');
   const log = root.querySelector('#smdh-log');
   const dungeons = root.querySelector('#smdh-dungeons');
+  const multiLaunchList = root.querySelector('#smdh-multi-launch');
+  const multiCycleList = root.querySelector('#smdh-multi-cycle');
   const mode = root.querySelector('#smdh-mode');
   const selectedDungeon = root.querySelector('#smdh-selected-dungeon');
   const auto = root.querySelector('#smdh-auto');
@@ -295,6 +328,11 @@
   [usePotions, autoClaim, autoMini, autoAdvent, selectedDungeon, potionMinRank, ...potionModeInputs].forEach(input => {
     input.addEventListener('change', saveSettings);
   });
+  root.addEventListener('change', event => {
+    if (event.target?.matches?.('[data-multi-launch], [data-multi-cycle]')) {
+      saveMultiSettings().catch(() => null);
+    }
+  });
   setInterval(async () => {
     if (!auto.checked) return;
     await chrome.runtime.sendMessage({ type: 'smdh_auto_tick' }).catch(() => null);
@@ -308,15 +346,23 @@
       return;
     }
     const type = action === 'selected' ? 'smdh_run_selected'
-      : action === 'run' ? 'smdh_run_once'
-        : action === 'batch' ? 'smdh_run_until_blocked'
-          : action === 'claim' ? 'smdh_claim'
-            : action === 'advent' ? 'smdh_claim_advent'
-              : action === 'sync' ? 'smdh_sync_mana'
-                : action === 'clear' ? 'smdh_clear_logs'
-                  : 'smdh_complete_mini_game';
+      : action === 'multi-launch' ? 'smdh_run_multi_launch'
+        : action === 'multi-cycle' ? 'smdh_run_multi_cycle'
+          : action === 'run' ? 'smdh_run_once'
+            : action === 'batch' ? 'smdh_run_until_blocked'
+              : action === 'claim' ? 'smdh_claim'
+                : action === 'advent' ? 'smdh_claim_advent'
+                  : action === 'sync' ? 'smdh_sync_mana'
+                    : action === 'clear' ? 'smdh_clear_logs'
+                      : 'smdh_complete_mini_game';
     status.textContent = 'Выполняю...';
-    const response = await chrome.runtime.sendMessage({ type, mode: mode.value, dungeonId: selectedDungeon.value });
+    if (action === 'multi-launch' || action === 'multi-cycle') await saveMultiSettings(false);
+    const response = await chrome.runtime.sendMessage({
+      type,
+      mode: mode.value,
+      dungeonId: selectedDungeon.value,
+      dungeonIds: action === 'multi-cycle' ? getCheckedDungeonIds('cycle') : getCheckedDungeonIds('launch')
+    });
     if (!response?.ok) status.textContent = response?.error || 'Ошибка';
     await refresh();
   });
@@ -327,6 +373,11 @@
     if (tab === 'settings') {
       setText('title', 'Settings');
       setText('subtitle', 'Автопилот, зелья и сбор наград');
+      return;
+    }
+    if (tab === 'multi') {
+      setText('title', 'Multi Dungeons');
+      setText('subtitle', 'Пачка запусков и цикл выбранных данжей');
       return;
     }
     setText('title', tab === 'dungeons' ? 'Dungeons' : 'Overview');
@@ -362,6 +413,17 @@
     await refresh();
   }
 
+  async function saveMultiSettings(shouldRefresh = true) {
+    await chrome.runtime.sendMessage({
+      type: 'smdh_set_settings',
+      settings: {
+        multiLaunchDungeonIds: getCheckedDungeonIds('launch'),
+        multiCycleDungeonIds: getCheckedDungeonIds('cycle')
+      }
+    });
+    if (shouldRefresh) await refresh();
+  }
+
   function render(state) {
     const profile = state.profile || {};
     const stored = state.stored || {};
@@ -394,6 +456,7 @@
       ? renderActiveRunStatus(active, state.activeRunDetails, activeCount)
       : '<strong>Активного данжа нет</strong><br><span>Можно запускать следующий цикл.</span>';
     renderDungeons(state.dungeons || [], profile);
+    renderMultiDungeons(state.dungeons || [], profile, stored);
     log.innerHTML = (stored.logs || []).slice(0, 10).map(item => `<div>${escapeHtml(item.message)}</div>`).join('') || '<div>Лог пуст.</div>';
   }
 
@@ -411,6 +474,34 @@
         </div>
       `;
     }).join('') || '<div class="smdh-dungeon">Подземелья не загружены.</div>';
+  }
+
+  function renderMultiDungeons(items, profile, stored = {}) {
+    renderMultiList(multiLaunchList, items, profile, stored.multiLaunchDungeonIds, 'launch');
+    renderMultiList(multiCycleList, items, profile, stored.multiCycleDungeonIds, 'cycle');
+  }
+
+  function renderMultiList(container, items, profile, selectedIds = [], kind = 'launch') {
+    if (!container) return;
+    const selected = new Set((selectedIds || []).map(String));
+    const current = RANKS.indexOf(profile?.rank || 'F');
+    container.innerHTML = (Array.isArray(items) ? items : []).map(item => {
+      const id = String(item?.id || '');
+      if (!id || !item?.rank) return '';
+      const locked = RANKS.indexOf(item.rank) > current + 1;
+      return `
+        <label class="smdh-multi-option ${locked ? 'locked' : ''}">
+          <input data-multi-${kind} type="checkbox" value="${escapeHtml(id)}" ${selected.has(id) ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+          <span class="smdh-rank">${escapeHtml(item.rank)}</span>
+          <span><strong>${escapeHtml(item.rank)}-данж</strong><small>${num(item.mp_cost)} MP · ${formatDuration(Number(item.duration_seconds || 0) * 1000)} · +${num(item.xp_reward)} XP</small></span>
+        </label>
+      `;
+    }).join('') || '<div class="smdh-dungeon">Данжи не загружены.</div>';
+  }
+
+  function getCheckedDungeonIds(kind) {
+    const selector = kind === 'cycle' ? '[data-multi-cycle]:checked' : '[data-multi-launch]:checked';
+    return [...root.querySelectorAll(selector)].map(input => Number(input.value)).filter(Boolean);
   }
 
   function renderDungeonSelect(items, selectedId) {

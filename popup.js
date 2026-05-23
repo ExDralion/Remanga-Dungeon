@@ -32,6 +32,8 @@ const nodes = {
   pageSubtitle: $('#pageSubtitle'),
   active: $('#active'),
   dungeons: $('#dungeons'),
+  multiLaunchList: $('#multiLaunchList'),
+  multiCycleList: $('#multiCycleList'),
   selectedDungeon: $('#selectedDungeon'),
   mode: $('#mode'),
   auto: $('#auto'),
@@ -61,6 +63,16 @@ $('#run').addEventListener('click', async () => {
 });
 $('#batch').addEventListener('click', async () => {
   await busy(() => send({ type: 'smdh_run_until_blocked', mode: nodes.mode.value }));
+  await refresh();
+});
+$('#runMultiLaunch').addEventListener('click', async () => {
+  await saveMultiSettings(false);
+  await busy(() => send({ type: 'smdh_run_multi_launch', dungeonIds: getCheckedDungeonIds('launch') }));
+  await refresh();
+});
+$('#runMultiCycle').addEventListener('click', async () => {
+  await saveMultiSettings(false);
+  await busy(() => send({ type: 'smdh_run_multi_cycle', dungeonIds: getCheckedDungeonIds('cycle') }));
   await refresh();
 });
 $('#claim').addEventListener('click', async () => {
@@ -94,6 +106,11 @@ nodes.mode.addEventListener('change', async () => {
 [nodes.usePotions, nodes.autoClaim, nodes.autoMini, nodes.autoAdvent, nodes.selectedDungeon, nodes.potionMinRank, ...nodes.potionModes].forEach(input => {
   input.addEventListener('change', saveSettings);
 });
+document.addEventListener('change', event => {
+  if (event.target?.matches?.('[data-multi-launch], [data-multi-cycle]')) {
+    saveMultiSettings().catch(() => null);
+  }
+});
 
 setInterval(async () => {
   if (!nodes.auto.checked) return;
@@ -107,6 +124,11 @@ function activateTab(tab) {
   if (tab === 'settings') {
     if (nodes.pageTitle) nodes.pageTitle.textContent = 'Settings';
     if (nodes.pageSubtitle) nodes.pageSubtitle.textContent = 'Автопилот, зелья и сбор наград';
+    return;
+  }
+  if (tab === 'multi') {
+    if (nodes.pageTitle) nodes.pageTitle.textContent = 'Multi Dungeons';
+    if (nodes.pageSubtitle) nodes.pageSubtitle.textContent = 'Пачка запусков и цикл выбранных данжей';
     return;
   }
   if (nodes.pageTitle) nodes.pageTitle.textContent = tab === 'dungeons' ? 'Dungeons' : 'Overview';
@@ -146,6 +168,17 @@ async function saveSettings() {
   await refresh();
 }
 
+async function saveMultiSettings(shouldRefresh = true) {
+  await send({
+    type: 'smdh_set_settings',
+    settings: {
+      multiLaunchDungeonIds: getCheckedDungeonIds('launch'),
+      multiCycleDungeonIds: getCheckedDungeonIds('cycle')
+    }
+  });
+  if (shouldRefresh) await refresh();
+}
+
 function render(state) {
   const profile = state.profile || {};
   const stored = state.stored || {};
@@ -181,6 +214,7 @@ function render(state) {
   const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : (state.activeRun ? 1 : 0);
   renderActiveRun(state.activeRun, state.nextAction, state.activeRunDetails, activeCount);
   renderDungeons(state.dungeons || [], profile);
+  renderMultiDungeons(state.dungeons || [], profile, stored);
   renderLog(stored.logs || []);
 }
 
@@ -249,6 +283,35 @@ function renderDungeons(dungeons, profile) {
       </div>
     `;
   }).join('') || '<p>Данжи не загружены.</p>';
+}
+
+function renderMultiDungeons(dungeons, profile, stored = {}) {
+  renderMultiList(nodes.multiLaunchList, dungeons, profile, stored.multiLaunchDungeonIds, 'launch');
+  renderMultiList(nodes.multiCycleList, dungeons, profile, stored.multiCycleDungeonIds, 'cycle');
+}
+
+function renderMultiList(container, dungeons, profile, selectedIds = [], kind = 'launch') {
+  if (!container) return;
+  const selected = new Set((selectedIds || []).map(String));
+  const current = RANKS.indexOf(profile.rank || 'F');
+  container.innerHTML = (dungeons || []).map(dungeon => {
+    const id = String(dungeon?.id || '');
+    if (!id || !dungeon?.rank) return '';
+    const locked = RANKS.indexOf(dungeon.rank) > current + 1;
+    return `
+      <label class="multi-option ${locked ? 'locked' : ''}">
+        <input data-multi-${kind} type="checkbox" value="${escapeHtml(id)}" ${selected.has(id) ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+        <span class="rank">${escapeHtml(dungeon.rank)}</span>
+        <span><strong>${escapeHtml(dungeon.rank)}-данж</strong><em>${num(dungeon.mp_cost)} MP · ${formatDuration(Number(dungeon.duration_seconds || 0) * 1000)}</em></span>
+        <small>+${num(dungeon.xp_reward)} XP · +${num(dungeon.coin_reward)} монет</small>
+      </label>
+    `;
+  }).join('') || '<p>Данжи не загружены.</p>';
+}
+
+function getCheckedDungeonIds(kind) {
+  const selector = kind === 'cycle' ? '[data-multi-cycle]:checked' : '[data-multi-launch]:checked';
+  return [...document.querySelectorAll(selector)].map(input => Number(input.value)).filter(Boolean);
 }
 
 function renderLog(logs) {

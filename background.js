@@ -26,6 +26,8 @@ const DEFAULT_STORE = {
   autoClaim: true,
   autoMini: true,
   selectedDungeonId: null,
+  multiLaunchDungeonIds: [],
+  multiCycleDungeonIds: [],
   retry: null,
   lastAdventClaimDate: null,
   lastAutoActionAt: null
@@ -93,6 +95,10 @@ async function handleMessage(message) {
       return { result: await runDungeonCycle(message.mode || 'safe', { allowParallel: true }) };
     case 'smdh_run_selected':
       return { result: await runUntilBlocked('selected', { selectedDungeonId: message.dungeonId }) };
+    case 'smdh_run_multi_launch':
+      return { result: await runMultiDungeons(message.dungeonIds, { cycle: false }) };
+    case 'smdh_run_multi_cycle':
+      return { result: await runMultiDungeons(message.dungeonIds, { cycle: true }) };
     case 'smdh_run_until_blocked':
       return { result: await runUntilBlocked(message.mode || 'safe') };
     case 'smdh_claim':
@@ -397,6 +403,60 @@ async function runUntilBlocked(mode = 'safe', options = {}) {
   const last = results[results.length - 1];
   await appendLog(`Серия завершена: ${results.length} шаг(ов), статус ${last?.action || 'unknown'}.`, 'idle');
   return { action: 'batch', results, last };
+}
+
+async function runMultiDungeons(dungeonIds = [], options = {}) {
+  const stored = await getStore();
+  const cycle = Boolean(options.cycle);
+  const ids = normalizeDungeonIds(dungeonIds?.length ? dungeonIds : (cycle ? stored.multiCycleDungeonIds : stored.multiLaunchDungeonIds));
+  if (!ids.length) {
+    const message = cycle ? 'Multi: не выбраны данжи для цикла.' : 'Multi: не выбраны данжи для запуска.';
+    await appendLog(message, 'idle');
+    return { action: cycle ? 'multi_cycle_empty' : 'multi_launch_empty', results: [], started: 0, message };
+  }
+
+  const results = [];
+  const maxStarts = cycle ? LOOP_LIMIT : ids.length;
+  const maxSteps = cycle ? LOOP_LIMIT * 2 : Math.max(ids.length * 2, ids.length + 8);
+  let cursor = 0;
+  let started = 0;
+  let blockedSweep = 0;
+
+  for (let step = 0; step < maxSteps && started < maxStarts; step += 1) {
+    const requestedDungeonId = ids[cursor % ids.length];
+    const result = await runDungeonCycle('selected', {
+      selectedDungeonId: requestedDungeonId,
+      allowParallel: true
+    });
+    results.push({ ...result, requestedDungeonId });
+
+    if (result?.action === 'mini_game_completed' || result?.action === 'claimed') {
+      blockedSweep = 0;
+      continue;
+    }
+
+    if (result?.action === 'started') {
+      started += 1;
+      cursor += 1;
+      blockedSweep = 0;
+      continue;
+    }
+
+    cursor += 1;
+    blockedSweep += 1;
+    if (blockedSweep >= ids.length) break;
+  }
+
+  const last = results[results.length - 1] || null;
+  const label = cycle ? 'Multi-цикл' : 'Multi-запуск';
+  await appendLog(`${label} завершен: запущено ${started}, шагов ${results.length}, статус ${last?.action || 'none'}.`, started ? 'success' : 'idle');
+  return {
+    action: cycle ? 'multi_cycle' : 'multi_launch',
+    requestedIds: ids,
+    results,
+    started,
+    last
+  };
 }
 
 function normalizeMode(mode) {
@@ -1080,6 +1140,13 @@ function normalizeNumber(value) {
   return Number.isFinite(number) ? Math.floor(number) : 0;
 }
 
+function normalizeDungeonIds(value) {
+  const items = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(items
+    .map(item => normalizeNumber(item))
+    .filter(item => item > 0))];
+}
+
 function formatDurationMs(ms) {
   if (!Number.isFinite(Number(ms)) || ms <= 0) return '0м';
   const totalMinutes = Math.ceil(ms / 60000);
@@ -1107,6 +1174,8 @@ function mergeStore(value) {
   };
   next.mode = normalizeMode(next.mode);
   next.potionMinRank = RANKS.includes(next.potionMinRank) ? next.potionMinRank : 'F';
+  next.multiLaunchDungeonIds = normalizeDungeonIds(next.multiLaunchDungeonIds);
+  next.multiCycleDungeonIds = normalizeDungeonIds(next.multiCycleDungeonIds);
   return next;
 }
 
@@ -1132,6 +1201,8 @@ async function updateSettings(settings) {
   if ('autoClaim' in settings) patch.autoClaim = Boolean(settings.autoClaim);
   if ('autoMini' in settings) patch.autoMini = Boolean(settings.autoMini);
   if ('selectedDungeonId' in settings) patch.selectedDungeonId = normalizeNumber(settings.selectedDungeonId) || null;
+  if ('multiLaunchDungeonIds' in settings) patch.multiLaunchDungeonIds = normalizeDungeonIds(settings.multiLaunchDungeonIds);
+  if ('multiCycleDungeonIds' in settings) patch.multiCycleDungeonIds = normalizeDungeonIds(settings.multiCycleDungeonIds);
   if ('potionMinRank' in settings && RANKS.includes(settings.potionMinRank)) patch.potionMinRank = settings.potionMinRank;
   if (settings.potionModes && typeof settings.potionModes === 'object') {
     const current = (await getStore()).potionModes || {};
