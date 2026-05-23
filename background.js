@@ -430,14 +430,16 @@ async function runMultiDungeons(dungeonIds = [], options = {}) {
     });
     results.push({ ...result, requestedDungeonId });
 
-    if (result?.action === 'mini_game_completed' || result?.action === 'claimed') {
+    const completedRequestedMini = result?.action === 'mini_game_completed'
+      && normalizeNumber(result?.run?.dungeon?.id) === requestedDungeonId;
+    if (result?.action === 'started' || completedRequestedMini) {
+      started += 1;
+      cursor += 1;
       blockedSweep = 0;
       continue;
     }
 
-    if (result?.action === 'started') {
-      started += 1;
-      cursor += 1;
+    if (result?.action === 'mini_game_completed' || result?.action === 'claimed') {
       blockedSweep = 0;
       continue;
     }
