@@ -6,7 +6,7 @@ const STORE_KEY = 'smdh-state';
 const AUTO_ALARM = 'smdh-auto';
 const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S', 'RE'];
 const MP_REGEN_INTERVAL_MS = 30 * 60 * 1000;
-const LOOP_LIMIT = 6;
+const LOOP_LIMIT = 20;
 const AUTO_RETRY_BASE_MS = 2 * 60 * 1000;
 const AUTO_RETRY_MAX_MS = 10 * 60 * 1000;
 const DEFAULT_STORE = {
@@ -90,7 +90,7 @@ async function handleMessage(message) {
     case 'smdh_auto_tick':
       return { result: await runAutoTick({ source: 'page' }) };
     case 'smdh_run_once':
-      return { result: await runDungeonCycle(message.mode || 'safe') };
+      return { result: await runDungeonCycle(message.mode || 'safe', { allowParallel: true }) };
     case 'smdh_run_selected':
       return { result: await runUntilBlocked('selected', { selectedDungeonId: message.dungeonId }) };
     case 'smdh_run_until_blocked':
@@ -171,7 +171,8 @@ async function getFullState() {
     potions: potionItems,
     stored
   });
-  const activeRun = getActiveRun(runItems);
+  const activeRuns = getActiveRuns(runItems);
+  const activeRun = getPrimaryActiveRun(activeRuns);
   const forecast = buildCoinForecast({
     profile: normalizedProfile,
     event,
@@ -195,6 +196,7 @@ async function getFullState() {
     forecast,
     efficiency,
     mana,
+    activeRuns,
     activeRun,
     activeRunDetails: buildActiveRunDetails(activeRun, normalizedProfile, stored),
     nextReadyAt: getNextReadyAt(runItems),
@@ -203,11 +205,29 @@ async function getFullState() {
 }
 
 function getActiveRun(runs) {
-  return runs.find(run => run.status === 1 && !run.is_reward_claimed) || null;
+  return getPrimaryActiveRun(getActiveRuns(runs));
+}
+
+function getActiveRuns(runs) {
+  return (Array.isArray(runs) ? runs : []).filter(run => run.status === 1 && !run.is_reward_claimed);
+}
+
+function getPrimaryActiveRun(runs) {
+  const items = Array.isArray(runs) ? runs : [];
+  return items.find(run => run.game_type === 2)
+    || items.find(run => run.game_type !== 2 && isRunReady(run))
+    || [...items].sort((a, b) => {
+      const left = Date.parse(a?.ends_at || '') || Number.MAX_SAFE_INTEGER;
+      const right = Date.parse(b?.ends_at || '') || Number.MAX_SAFE_INTEGER;
+      return left - right;
+    })[0]
+    || null;
 }
 
 function getNextReadyAt(runs) {
-  const active = getActiveRun(runs);
+  const active = getActiveRuns(runs)
+    .filter(run => run.game_type !== 2 && run.ends_at)
+    .sort((a, b) => (Date.parse(a.ends_at) || 0) - (Date.parse(b.ends_at) || 0))[0];
   return active?.ends_at || null;
 }
 
@@ -290,7 +310,25 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
   if (mode !== 'selected') await updateStore({ mode });
   const state = await getFullState();
   if (state.profile?.error) throw new Error(`Профиль события не загружен: ${state.profile.error}`);
-  if (state.activeRun) {
+  const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns : (state.activeRun ? [state.activeRun] : []);
+  const miniRun = activeRuns.find(run => run.game_type === 2);
+  if (miniRun) {
+    if (state.stored?.autoMini === false) {
+      await appendLog('Mini-game waits because auto-close is disabled.', 'idle');
+      return { action: 'mini_wait', run: miniRun };
+    }
+    return completeActiveMiniGame(miniRun);
+  }
+  const readyRun = activeRuns.find(run => run.game_type !== 2 && isRunReady(run));
+  if (readyRun) {
+    if (state.stored?.autoClaim === false) {
+      await appendLog('Dungeon reward waits because auto-claim is disabled.', 'idle');
+      return { action: 'claim_wait', run: readyRun };
+    }
+    return claimRunReward(readyRun);
+  }
+
+  if (state.activeRun && !options.allowParallel) {
     if (state.activeRun.game_type === 2) {
       if (state.stored?.autoMini === false) {
         await appendLog('Mini-game waits because auto-close is disabled.', 'idle');
@@ -307,7 +345,7 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
     }
     const waitText = formatWait(state.activeRun.ends_at);
     await appendLog(`Активный ${state.activeRun.dungeon.rank}-данж еще идет: ${waitText}.`, 'idle');
-    return { action: 'wait', run: state.activeRun, message: waitText };
+    return { action: 'wait', run: state.activeRun, activeRuns, message: waitText };
   }
 
   const dungeon = chooseCycleDungeon(state, mode, {
@@ -330,7 +368,14 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
     return { action: 'no_mp', dungeon, message, waitMs, potions: potionPlan.selected };
   }
 
-  const run = await api(`/dungeon/${dungeon.id}/enter/`, { method: 'POST', body: potionPlan.body });
+  let run = null;
+  try {
+    run = await api(`/dungeon/${dungeon.id}/enter/`, { method: 'POST', body: potionPlan.body });
+  } catch (error) {
+    const message = error?.message || String(error);
+    await appendLog(`Запуск ${dungeon.rank}-данжа остановлен: ${message}`, 'idle');
+    return { action: 'start_blocked', dungeon, message, potions: potionPlan.selected };
+  }
   await updateManaAfterSpend(state, effectiveCost);
   await appendLog(`Запущен ${run.dungeon.rank}-данж${potionPlan.text ? `, баффы активны: ${potionPlan.text}` : ''}: ${run.game_type === 2 ? 'мини-игра' : formatWait(run.ends_at)}.`, 'success');
   if (run.game_type === 2) {
@@ -342,9 +387,9 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
 async function runUntilBlocked(mode = 'safe', options = {}) {
   const results = [];
   for (let index = 0; index < LOOP_LIMIT; index += 1) {
-    const result = await runDungeonCycle(mode, options);
+    const result = await runDungeonCycle(mode, { ...options, allowParallel: options.allowParallel !== false });
     results.push(result);
-    if (!['mini_game_completed', 'claimed'].includes(result?.action)) {
+    if (!['mini_game_completed', 'claimed', 'started'].includes(result?.action)) {
       break;
     }
     if (options.auto) await sleep(300);
@@ -424,10 +469,10 @@ function chooseDungeon(state, mode, options = {}) {
 
 function buildNextAction(state) {
   if (state.profile?.error) return { type: 'error', text: 'Профиль события не загружен' };
-  const active = getActiveRun(state.runs || []);
+  const activeRuns = getActiveRuns(state.runs || []);
+  const active = getPrimaryActiveRun(activeRuns);
   if (active?.game_type === 2) return { type: 'mini', text: `${active.dungeon?.rank || '?'}-данж: закрыть мини-игру` };
   if (active && isRunReady(active)) return { type: 'claim', text: `${active.dungeon?.rank || '?'}-данж: забрать награду` };
-  if (active) return { type: 'wait', text: `${active.dungeon?.rank || '?'}-данж идет еще ${formatWait(active.ends_at)}` };
   const dungeon = chooseCycleDungeon(
     state,
     state.stored?.selectedDungeonId ? 'selected' : (state.stored?.mode || 'safe'),
@@ -436,8 +481,10 @@ function buildNextAction(state) {
   if (!dungeon) return { type: 'none', text: 'Нет доступного данжа' };
   const currentMp = getTrackedMp(state);
   if (currentMp < Number(dungeon.mp_cost || 0)) {
-    return { type: 'mp', text: `Нужно ${dungeon.mp_cost} MP для ${dungeon.rank}, сейчас ${currentMp}. Ждать ${formatDurationMs(getManaWaitMs(state.mana, dungeon.mp_cost))}` };
+    const activeText = active ? ` Активных: ${activeRuns.length}.` : '';
+    return { type: 'mp', text: `Нужно ${dungeon.mp_cost} MP для ${dungeon.rank}, сейчас ${currentMp}. Ждать ${formatDurationMs(getManaWaitMs(state.mana, dungeon.mp_cost))}.${activeText}` };
   }
+  if (active) return { type: 'start', text: `Можно запустить еще ${dungeon.rank}-данж. Активных: ${activeRuns.length}.` };
   return { type: 'start', text: `Можно запустить ${dungeon.rank}-данж` };
 }
 
@@ -780,16 +827,22 @@ function formatPotionName(userPotion) {
 
 async function claimReadyOrMiniGame() {
   const state = await getFullState();
-  if (!state.activeRun) return { action: 'none', message: 'Активного данжа нет.' };
-  if (state.activeRun.game_type === 2) return completeActiveMiniGame(state.activeRun);
-  if (!isRunReady(state.activeRun)) {
-    throw new Error(`Данж еще идет: ${formatWait(state.activeRun.ends_at)}`);
+  const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns : (state.activeRun ? [state.activeRun] : []);
+  const miniRun = activeRuns.find(run => run.game_type === 2);
+  if (miniRun) return completeActiveMiniGame(miniRun);
+  const readyRun = activeRuns.find(run => run.game_type !== 2 && isRunReady(run));
+  if (readyRun) return claimRunReward(readyRun);
+  if (!activeRuns.length) return { action: 'none', message: 'Активного данжа нет.' };
+  const activeRun = getPrimaryActiveRun(activeRuns);
+  if (!isRunReady(activeRun)) {
+    throw new Error(`Данж еще идет: ${formatWait(activeRun.ends_at)}`);
   }
-  return claimRunReward(state.activeRun);
+  return claimRunReward(activeRun);
 }
 
 async function completeActiveMiniGame(activeRun = null) {
-  const run = activeRun || (await getFullState()).activeRun;
+  const state = activeRun ? null : await getFullState();
+  const run = activeRun || state?.activeRuns?.find(item => item.game_type === 2) || state?.activeRun;
   if (!run) throw new Error('Активная мини-игра не найдена.');
   if (run.game_type !== 2) throw new Error('Активный данж не является мини-игрой.');
   const reward = await api(`/dungeon/runs/${run.id}/mini-game-reward/`, {

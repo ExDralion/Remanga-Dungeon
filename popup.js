@@ -178,7 +178,8 @@ function render(state) {
   if (nodes.topStatus) nodes.topStatus.textContent = `${profile.rank || '?'} · ${num(profile.current_mp)}/${num(profile.max_mp)} MP`;
 
   renderRankProgress(profile, state.event?.meta?.ranks || {});
-  renderActiveRun(state.activeRun, state.nextAction, state.activeRunDetails);
+  const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : (state.activeRun ? 1 : 0);
+  renderActiveRun(state.activeRun, state.nextAction, state.activeRunDetails, activeCount);
   renderDungeons(state.dungeons || [], profile);
   renderLog(stored.logs || []);
 }
@@ -199,12 +200,13 @@ function renderRankProgress(profile, thresholds) {
   nodes.rankBar.style.width = `${percent}%`;
 }
 
-function renderActiveRun(run, nextAction = null, details = null) {
+function renderActiveRun(run, nextAction = null, details = null, activeCount = 1) {
   if (!run) {
     nodes.active.innerHTML = `<strong>Активного данжа нет</strong><small>${escapeHtml(nextAction?.text || 'Можно запускать следующий цикл.')}</small>`;
     return;
   }
   const isMini = run.game_type === 2;
+  const activeCountLine = activeCount > 1 ? `<small>Активных данжей: ${num(activeCount)}</small>` : '';
   const rewardText = details
     ? `Награда: +${num(details.xp_reward)} XP · ~${num(Math.round(details.expected_coins))} монет (${Math.round(Number(details.chance || 0))}%)`
     : '';
@@ -212,6 +214,7 @@ function renderActiveRun(run, nextAction = null, details = null) {
   nodes.active.innerHTML = `
     <strong>${escapeHtml(run.dungeon.rank)}-данж ${isMini ? 'с мини-игрой' : 'в процессе'}</strong>
     <small>${isMini ? 'Мини-игру можно закрыть кнопкой "Завершить мини-игру".' : `Готовность: ${escapeHtml(formatDate(run.ends_at))} (${escapeHtml(formatDuration(Date.parse(run.ends_at) - Date.now()))})`}</small>
+    ${activeCountLine}
     ${rewardText ? `<small>${escapeHtml(rewardText)}</small>` : ''}
     ${actionText ? `<small>${escapeHtml(actionText)}</small>` : ''}
   `;

@@ -387,10 +387,11 @@
     });
 
     const active = state.activeRun;
+    const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : (active ? 1 : 0);
     status.innerHTML = !active && state.nextAction?.text
       ? `<strong>Следующее действие</strong><br><span>${escapeHtml(state.nextAction.text)}</span>`
       : active?.dungeon?.rank
-      ? renderActiveRunStatus(active, state.activeRunDetails)
+      ? renderActiveRunStatus(active, state.activeRunDetails, activeCount)
       : '<strong>Активного данжа нет</strong><br><span>Можно запускать следующий цикл.</span>';
     renderDungeons(state.dungeons || [], profile);
     log.innerHTML = (stored.logs || []).slice(0, 10).map(item => `<div>${escapeHtml(item.message)}</div>`).join('') || '<div>Лог пуст.</div>';
@@ -456,8 +457,9 @@
     setText('runAvgCoins', efficiency?.success ? num(Math.round(efficiency.avg_coins)) : '-');
   }
 
-  function renderActiveRunStatus(active, details = null) {
-    const base = `<strong>${escapeHtml(active.dungeon.rank)}-данж</strong><br><span>${active.game_type === 2 ? 'мини-игра ждет завершения' : `готовность ${escapeHtml(formatDate(active.ends_at))}`}</span>`;
+  function renderActiveRunStatus(active, details = null, activeCount = 1) {
+    const countText = activeCount > 1 ? ` · активных ${activeCount}` : '';
+    const base = `<strong>${escapeHtml(active.dungeon.rank)}-данж${countText}</strong><br><span>${active.game_type === 2 ? 'мини-игра ждет завершения' : `готовность ${escapeHtml(formatDate(active.ends_at))}`}</span>`;
     if (!details) return base;
     return `${base}<br><span>~${num(Math.round(details.expected_coins))} монет · ${num(details.xp_reward)} XP · ${Math.round(Number(details.chance || 0))}%</span><br><span>${escapeHtml(details.next_action || '')}</span>`;
   }
