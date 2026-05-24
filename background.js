@@ -334,6 +334,14 @@ async function runDungeonCycle(mode = 'safe', options = {}) {
     return claimRunReward(readyRun);
   }
 
+  if (activeRuns.length && options.respectActiveLimit !== false) {
+    const activeRun = getPrimaryActiveRun(activeRuns);
+    const waitText = formatWait(activeRun?.ends_at);
+    const message = `Активный ${activeRun?.dungeon?.rank || '?'}-данж еще идет: ${waitText}. Новый запуск будет после завершения.`;
+    await appendLog(message, 'idle');
+    return { action: 'active_wait', run: activeRun, activeRuns, message };
+  }
+
   if (state.activeRun && !options.allowParallel) {
     if (state.activeRun.game_type === 2) {
       if (state.stored?.autoMini === false) {
