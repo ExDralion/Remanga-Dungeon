@@ -344,6 +344,16 @@
         linear-gradient(135deg, rgba(14, 165, 233, .1), rgba(20, 83, 45, .1));
     }
 
+    .queue-state {
+      margin-top: 4px;
+      padding: 9px 10px;
+      border: 1px solid rgba(125, 211, 252, .18);
+      border-radius: 12px;
+      background: rgba(125, 211, 252, .07);
+      color: #dff7ff;
+      font-weight: 850;
+    }
+
     .toolbar, .buttons, .settings {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -705,6 +715,7 @@
           <article class="panel active-run">
             <span class="nav-label">Multi Dungeons</span>
             <div>Выбери данжи для разового запуска и отдельный набор для цикла. Мини-игры и готовые награды обрабатываются перед каждым новым запуском.</div>
+            <div id="multiQueueState" class="queue-state">Очередь: 0</div>
           </article>
 
           <div class="multi-grid">
@@ -720,6 +731,7 @@
 
           <article class="panel">
             <div class="buttons">
+              <button id="runAllDungeons" class="action primary" type="button">Запустить все доступные</button>
               <button id="runMultiLaunch" class="action primary" type="button">Запустить выбранные</button>
               <button id="runMultiCycle" class="action primary" type="button">Цикл выбранных</button>
             </div>

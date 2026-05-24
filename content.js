@@ -111,6 +111,7 @@
             <article class="smdh-panel">
               <span class="smdh-nav-label">Multi Dungeons</span>
               <p class="smdh-help">Выбери данжи для разового запуска и отдельный набор для цикла. Мини-игры и готовые награды обрабатываются перед каждым новым запуском.</p>
+              <div class="smdh-queue-state" data-role="multiQueue">Очередь: 0</div>
             </article>
             <div class="smdh-multi-grid">
               <article class="smdh-panel">
@@ -124,6 +125,7 @@
             </div>
             <article class="smdh-panel">
               <div class="smdh-actions">
+                <button data-action="multi-all" type="button">Запустить все доступные</button>
                 <button data-action="multi-launch" type="button">Запустить выбранные</button>
                 <button data-action="multi-cycle" type="button">Цикл выбранных</button>
               </div>
@@ -270,6 +272,7 @@
     .smdh-multi-option input { width: 16px; height: 16px; accent-color: #6ee7b7; }
     .smdh-multi-option small { display: block; color: #94a3b8; }
     .smdh-help { margin: 7px 0 0; color: #94a3b8; }
+    .smdh-queue-state { margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(125,211,252,.18); border-radius: 12px; background: rgba(125,211,252,.07); color: #dff7ff; font-weight: 850; }
     .smdh-dungeon.locked, .smdh-multi-option.locked { opacity: .45; }
     .smdh-rank { padding: 7px; border-radius: 9px; background: rgba(125,211,252,.12); color: #7dd3fc; text-align: center; font-weight: 950; }
     #smdh-log { max-height: 145px; overflow: auto; }
@@ -346,15 +349,16 @@
       return;
     }
     const type = action === 'selected' ? 'smdh_run_selected'
-      : action === 'multi-launch' ? 'smdh_run_multi_launch'
-        : action === 'multi-cycle' ? 'smdh_run_multi_cycle'
-          : action === 'run' ? 'smdh_run_once'
-            : action === 'batch' ? 'smdh_run_until_blocked'
-              : action === 'claim' ? 'smdh_claim'
-                : action === 'advent' ? 'smdh_claim_advent'
-                  : action === 'sync' ? 'smdh_sync_mana'
-                    : action === 'clear' ? 'smdh_clear_logs'
-                      : 'smdh_complete_mini_game';
+      : action === 'multi-all' ? 'smdh_run_all_dungeons'
+        : action === 'multi-launch' ? 'smdh_run_multi_launch'
+          : action === 'multi-cycle' ? 'smdh_run_multi_cycle'
+            : action === 'run' ? 'smdh_run_once'
+              : action === 'batch' ? 'smdh_run_until_blocked'
+                : action === 'claim' ? 'smdh_claim'
+                  : action === 'advent' ? 'smdh_claim_advent'
+                    : action === 'sync' ? 'smdh_sync_mana'
+                      : action === 'clear' ? 'smdh_clear_logs'
+                        : 'smdh_complete_mini_game';
     status.textContent = 'Выполняю...';
     if (action === 'multi-launch' || action === 'multi-cycle') await saveMultiSettings(false);
     const response = await chrome.runtime.sendMessage({
@@ -457,6 +461,7 @@
       : '<strong>Активного данжа нет</strong><br><span>Можно запускать следующий цикл.</span>';
     renderDungeons(state.dungeons || [], profile);
     renderMultiDungeons(state.dungeons || [], profile, stored);
+    setText('multiQueue', `Очередь: ${(stored.multiQueueDungeonIds || []).length}`);
     log.innerHTML = (stored.logs || []).slice(0, 10).map(item => `<div>${escapeHtml(item.message)}</div>`).join('') || '<div>Лог пуст.</div>';
   }
 

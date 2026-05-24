@@ -28,6 +28,7 @@ const DEFAULT_STORE = {
   selectedDungeonId: null,
   multiLaunchDungeonIds: [],
   multiCycleDungeonIds: [],
+  multiQueueDungeonIds: [],
   retry: null,
   lastAdventClaimDate: null,
   lastAutoActionAt: null
@@ -99,6 +100,8 @@ async function handleMessage(message) {
       return { result: await runMultiDungeons(message.dungeonIds, { cycle: false }) };
     case 'smdh_run_multi_cycle':
       return { result: await runMultiDungeons(message.dungeonIds, { cycle: true }) };
+    case 'smdh_run_all_dungeons':
+      return { result: await runAllAvailableDungeons() };
     case 'smdh_run_until_blocked':
       return { result: await runUntilBlocked(message.mode || 'safe') };
     case 'smdh_claim':
@@ -289,13 +292,22 @@ function extractCoinBalance(profile, eventBalance) {
 
 async function runAutoTick(options = {}) {
   const stored = await getStore();
-  if (!stored.auto) return null;
+  const hasQueue = normalizeDungeonIds(stored.multiQueueDungeonIds).length > 0;
+  if (!stored.auto && !hasQueue) return null;
   if (stored.retry?.until && Date.parse(stored.retry.until) > Date.now()) {
     return { action: 'retry_wait', retry: stored.retry };
   }
 
   try {
     if (stored.autoAdvent) await claimDailyAdventOnce();
+    if (hasQueue) {
+      const result = await runQueuedDungeons({ auto: true });
+      await updateStore({
+        retry: null,
+        lastAutoActionAt: new Date().toISOString()
+      });
+      return { action: 'queue_tick', source: options.source || 'alarm', result };
+    }
     const result = await runUntilBlocked(
       stored.selectedDungeonId ? 'selected' : (stored.mode || 'safe'),
       { auto: true, selectedDungeonId: stored.selectedDungeonId }
@@ -478,6 +490,148 @@ async function runMultiDungeons(dungeonIds = [], options = {}) {
     started,
     last
   };
+}
+
+async function runAllAvailableDungeons() {
+  const state = await getFullState();
+  if (state.profile?.error) throw new Error(`Профиль события не загружен: ${state.profile.error}`);
+  const ids = getAvailableDungeonIds(state, { excludeActive: true });
+  await updateStore({ multiQueueDungeonIds: ids });
+  if (!ids.length) {
+    const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns : [];
+    const message = activeRuns.length
+      ? 'Все доступные данжи уже активны или ожидают награду.'
+      : 'Нет доступных данжей для очереди.';
+    await appendLog(`All dungeons: ${message}`, 'idle');
+    return { action: 'all_dungeons_empty', queuedIds: [], message };
+  }
+
+  await appendLog(`All dungeons: в очередь добавлено ${ids.length} доступных данжей.`, 'success');
+  const result = await runQueuedDungeons({ source: 'all', maxSteps: 6 });
+  return {
+    action: 'all_dungeons',
+    queuedIds: ids,
+    result
+  };
+}
+
+async function runQueuedDungeons(options = {}) {
+  let queue = normalizeDungeonIds((await getStore()).multiQueueDungeonIds);
+  if (!queue.length) {
+    return { action: 'queue_empty', results: [], remainingIds: [] };
+  }
+
+  const results = [];
+  const maxSteps = Math.min(Math.max(Number(options.maxSteps || 4), 1), 8);
+
+  for (let step = 0; step < maxSteps && queue.length; step += 1) {
+    const state = await getFullState();
+    const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns : (state.activeRun ? [state.activeRun] : []);
+    const miniRun = activeRuns.find(run => run.game_type === 2);
+    if (miniRun) {
+      if (state.stored?.autoMini === false) {
+        const result = { action: 'mini_wait', run: miniRun };
+        results.push(result);
+        await appendLog('Queue: мини-игра ждет, автозавершение выключено.', 'idle');
+        return { action: 'queue_wait', reason: 'mini_wait', results, remainingIds: queue, last: result };
+      }
+      const result = await completeActiveMiniGame(miniRun);
+      results.push(result);
+      continue;
+    }
+
+    const readyRun = activeRuns.find(run => run.game_type !== 2 && isRunReady(run));
+    if (readyRun) {
+      if (state.stored?.autoClaim === false) {
+        const result = { action: 'claim_wait', run: readyRun };
+        results.push(result);
+        await appendLog('Queue: награда готова, автосбор выключен.', 'idle');
+        return { action: 'queue_wait', reason: 'claim_wait', results, remainingIds: queue, last: result };
+      }
+      const result = await claimRunReward(readyRun);
+      results.push(result);
+      continue;
+    }
+
+    if (activeRuns.length) {
+      const activeRun = getPrimaryActiveRun(activeRuns);
+      const message = `Queue: активный ${activeRun?.dungeon?.rank || '?'}-данж еще идет: ${formatWait(activeRun?.ends_at)}.`;
+      const result = { action: 'active_wait', run: activeRun, activeRuns, message };
+      results.push(result);
+      await appendLog(message, 'idle');
+      return { action: 'queue_wait', reason: 'active_wait', results, remainingIds: queue, last: result };
+    }
+
+    const requestedDungeonId = queue[0];
+    let result = null;
+    try {
+      result = await runDungeonCycle('selected', {
+        selectedDungeonId: requestedDungeonId,
+        allowParallel: true
+      });
+    } catch (error) {
+      result = { action: 'queue_error', requestedDungeonId, message: error?.message || String(error) };
+    }
+
+    results.push({ ...result, requestedDungeonId });
+
+    const completedRequestedMini = result?.action === 'mini_game_completed'
+      && getRunDungeonId(result?.run) === requestedDungeonId;
+    if (['started', 'already_active'].includes(result?.action) || completedRequestedMini) {
+      queue = removeDungeonId(queue, requestedDungeonId);
+      await updateStore({ multiQueueDungeonIds: queue });
+      if (result.action === 'started') break;
+      continue;
+    }
+
+    if (['no_mp', 'active_wait', 'mini_wait', 'claim_wait'].includes(result?.action)) {
+      return { action: 'queue_wait', reason: result.action, results, remainingIds: queue, last: result };
+    }
+
+    if (result?.action === 'start_blocked' && isManaError(result.message)) {
+      return { action: 'queue_wait', reason: 'no_mp', results, remainingIds: queue, last: result };
+    }
+
+    queue = removeDungeonId(queue, requestedDungeonId);
+    await updateStore({ multiQueueDungeonIds: queue });
+  }
+
+  const last = results[results.length - 1] || null;
+  if (!queue.length) {
+    await appendLog('Queue: все доступные данжи обработаны.', 'success');
+  }
+  return {
+    action: queue.length ? 'queue_step' : 'queue_done',
+    results,
+    remainingIds: queue,
+    last
+  };
+}
+
+function getAvailableDungeonIds(state, options = {}) {
+  const profile = state?.profile || {};
+  const rankIndex = RANKS.indexOf(profile.rank || 'F');
+  if (rankIndex < 0) return [];
+  const activeDungeonIds = new Set((state?.activeRuns || []).map(getRunDungeonId).filter(Boolean));
+  return normalizeDungeonIds((Array.isArray(state?.dungeons) ? state.dungeons : [])
+    .filter(dungeon => dungeon && dungeon.rank && RANKS.indexOf(dungeon.rank) >= 0)
+    .filter(dungeon => RANKS.indexOf(dungeon.rank) <= rankIndex + 1)
+    .filter(dungeon => !options.excludeActive || !activeDungeonIds.has(normalizeNumber(dungeon.id)))
+    .sort((a, b) =>
+      RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank) ||
+      normalizeNumber(a.mp_cost) - normalizeNumber(b.mp_cost) ||
+      normalizeNumber(a.id) - normalizeNumber(b.id)
+    )
+    .map(dungeon => dungeon.id));
+}
+
+function removeDungeonId(ids, id) {
+  const target = normalizeNumber(id);
+  return normalizeDungeonIds(ids).filter(item => item !== target);
+}
+
+function isManaError(message) {
+  return /mp|mana|энерг|ман/i.test(String(message || ''));
 }
 
 function normalizeMode(mode) {
@@ -1213,6 +1367,7 @@ function mergeStore(value) {
   next.potionMinRank = RANKS.includes(next.potionMinRank) ? next.potionMinRank : 'F';
   next.multiLaunchDungeonIds = normalizeDungeonIds(next.multiLaunchDungeonIds);
   next.multiCycleDungeonIds = normalizeDungeonIds(next.multiCycleDungeonIds);
+  next.multiQueueDungeonIds = normalizeDungeonIds(next.multiQueueDungeonIds);
   return next;
 }
 
@@ -1240,6 +1395,7 @@ async function updateSettings(settings) {
   if ('selectedDungeonId' in settings) patch.selectedDungeonId = normalizeNumber(settings.selectedDungeonId) || null;
   if ('multiLaunchDungeonIds' in settings) patch.multiLaunchDungeonIds = normalizeDungeonIds(settings.multiLaunchDungeonIds);
   if ('multiCycleDungeonIds' in settings) patch.multiCycleDungeonIds = normalizeDungeonIds(settings.multiCycleDungeonIds);
+  if ('multiQueueDungeonIds' in settings) patch.multiQueueDungeonIds = normalizeDungeonIds(settings.multiQueueDungeonIds);
   if ('potionMinRank' in settings && RANKS.includes(settings.potionMinRank)) patch.potionMinRank = settings.potionMinRank;
   if (settings.potionModes && typeof settings.potionModes === 'object') {
     const current = (await getStore()).potionModes || {};

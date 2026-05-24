@@ -32,6 +32,7 @@ const nodes = {
   pageSubtitle: $('#pageSubtitle'),
   active: $('#active'),
   dungeons: $('#dungeons'),
+  multiQueueState: $('#multiQueueState'),
   multiLaunchList: $('#multiLaunchList'),
   multiCycleList: $('#multiCycleList'),
   selectedDungeon: $('#selectedDungeon'),
@@ -73,6 +74,10 @@ $('#runMultiLaunch').addEventListener('click', async () => {
 $('#runMultiCycle').addEventListener('click', async () => {
   await saveMultiSettings(false);
   await busy(() => send({ type: 'smdh_run_multi_cycle', dungeonIds: getCheckedDungeonIds('cycle') }));
+  await refresh();
+});
+$('#runAllDungeons').addEventListener('click', async () => {
+  await busy(() => send({ type: 'smdh_run_all_dungeons' }));
   await refresh();
 });
 $('#claim').addEventListener('click', async () => {
@@ -215,6 +220,7 @@ function render(state) {
   renderActiveRun(state.activeRun, state.nextAction, state.activeRunDetails, activeCount);
   renderDungeons(state.dungeons || [], profile);
   renderMultiDungeons(state.dungeons || [], profile, stored);
+  if (nodes.multiQueueState) nodes.multiQueueState.textContent = `Очередь: ${(stored.multiQueueDungeonIds || []).length}`;
   renderLog(stored.logs || []);
 }
 
